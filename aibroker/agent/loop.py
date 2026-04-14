@@ -177,8 +177,8 @@ class AgentSession:
         self.step = 0
         self.cash = self.initial_deposit
         self.positions = {}
-        self.trades = []
-        self.decisions = []
+        self.trades = deque(maxlen=1000)
+        self.decisions = deque(maxlen=1000)
         try:
             from aibroker.data.storage import save_session_start
             self._db_session_id = save_session_start(self.mode, self.risk_level, self.initial_deposit, self.symbols)
@@ -512,28 +512,22 @@ class AgentSession:
         return self.status()
 
     def _sim_risk_allows(self, symbol: str, action: str, qty: int) -> bool:
-        """Enforce risk limits in simulation: daily loss, max exposure, kill switch."""
-        rp = RISK_PROFILES.get(self.risk_level, RISK_PROFILES["medium"])
+        """Enforce risk limits in simulation: drawdown cap, per-symbol exposure."""
         eq = self.equity()
-        pnl = eq - self.initial_deposit
 
-        daily_loss_limit = self.initial_deposit * 0.08
-        if self.risk_level == "low":
-            daily_loss_limit = self.initial_deposit * 0.03
-        elif self.risk_level == "medium":
-            daily_loss_limit = self.initial_deposit * 0.05
-
-        if pnl < -daily_loss_limit:
-            log.debug("Risk gate blocked %s %s: daily loss %.0f > limit %.0f", action, symbol, -pnl, daily_loss_limit)
+        max_dd_pct = {"low": 0.25, "medium": 0.40, "high": 0.55}.get(self.risk_level, 0.40)
+        if eq < self.initial_deposit * (1 - max_dd_pct):
+            log.debug("Risk gate blocked %s %s: drawdown > %d%%", action, symbol, int(max_dd_pct * 100))
             return False
 
+        max_sym_pct = {"low": 0.25, "medium": 0.35, "high": 0.45}.get(self.risk_level, 0.35)
         if action in ("buy", "short") and eq > 0:
             price = self._next_bar_open(symbol)
             if price > 0:
                 new_notional = qty * price
                 existing = abs(float(self.positions.get(symbol, {}).get("qty", 0))) * price
-                if (existing + new_notional) / eq > 0.30:
-                    log.debug("Risk gate blocked %s %s: exposure > 30%%", action, symbol)
+                if (existing + new_notional) / eq > max_sym_pct:
+                    log.debug("Risk gate blocked %s %s: exposure > %d%%", action, symbol, int(max_sym_pct * 100))
                     return False
         return True
 

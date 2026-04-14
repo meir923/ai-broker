@@ -324,25 +324,36 @@ class TestEquityConservation:
 # ── _sim_risk_allows ─────────────────────────────────────────────────────
 
 class TestSimRiskAllows:
-    def test_blocks_when_loss_too_high(self):
+    def test_blocks_when_drawdown_too_high(self):
         s = _session({"SPY": _bars(100, base=100)}, deposit=100_000, risk="medium")
-        s.cash = 90_000
+        s.cash = 55_000  # equity = 55k, drawdown = 45% > 40% limit
         s.positions = {}
-        # equity = 90000, pnl = -10000, limit for medium = 5% = 5000
         assert s._sim_risk_allows("SPY", "buy", 10) is False
 
-    def test_allows_within_loss_limit(self):
+    def test_allows_within_drawdown_limit(self):
         s = _session({"SPY": _bars(100, base=100)}, deposit=100_000, risk="medium")
-        s.cash = 96_000
+        s.cash = 70_000  # equity = 70k, drawdown = 30% < 40% limit
         assert s._sim_risk_allows("SPY", "buy", 10) is True
 
-    def test_blocks_exposure_over_30pct(self):
+    def test_blocks_exposure_over_limit(self):
         s = _session({"SPY": _bars(100, base=100)}, deposit=100_000, risk="medium")
-        # try to buy 400 shares at ~$150 = $60,000 = 60% exposure
+        # try to buy 400 shares at ~$150 = $60,000 = 60% > 35% limit
         assert s._sim_risk_allows("SPY", "buy", 400) is False
 
     def test_allows_small_exposure(self):
         s = _session({"SPY": _bars(100, base=100)}, deposit=100_000, risk="medium")
+        assert s._sim_risk_allows("SPY", "buy", 10) is True
+
+    def test_low_risk_tighter_drawdown(self):
+        s = _session({"SPY": _bars(100, base=100)}, deposit=100_000, risk="low")
+        s.cash = 72_000  # drawdown = 28% > 25% limit
+        s.positions = {}
+        assert s._sim_risk_allows("SPY", "buy", 10) is False
+
+    def test_high_risk_wider_drawdown(self):
+        s = _session({"SPY": _bars(100, base=100)}, deposit=100_000, risk="high")
+        s.cash = 50_000  # drawdown = 50% < 55% limit
+        s.positions = {}
         assert s._sim_risk_allows("SPY", "buy", 10) is True
 
 

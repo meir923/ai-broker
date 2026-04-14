@@ -42,8 +42,9 @@ class TestRiskProfiles:
     def test_high_allows_shorts(self):
         assert RISK_PROFILES["high"]["allow_shorts"] is True
 
-    def test_low_disallows_shorts(self):
-        assert RISK_PROFILES["low"]["allow_shorts"] is False
+    def test_all_levels_allow_shorts(self):
+        for level, p in RISK_PROFILES.items():
+            assert p["allow_shorts"] is True, f"{level} should allow shorts"
 
     def test_hebrew_labels(self):
         assert RISK_PROFILES["low"]["label_he"] == "נמוך"

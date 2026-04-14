@@ -60,16 +60,36 @@ def trend_label(bars: list[Bar], end: int) -> str:
     return "SIDEWAYS"
 
 
+def roc(bars: list[Bar], idx: int, period: int) -> float | None:
+    """Rate of Change (%) over `period` bars."""
+    if idx < period:
+        return None
+    prev = float(bars[idx - period]["c"])
+    if prev == 0:
+        return None
+    return round((float(bars[idx]["c"]) - prev) / prev * 100, 2)
+
+
 def technicals_for_symbol(bars: list[Bar], idx: int) -> dict[str, Any]:
     close = float(bars[idx]["c"])
-    return {
+    ma50 = sma(bars, idx, min(50, idx + 1))
+    a14 = atr(bars, idx, 14)
+    result: dict[str, Any] = {
         "price": round(close, 2),
         "ma20": round(sma(bars, idx, 20) or 0, 2),
+        "ma50": round(ma50 or 0, 2),
         "rsi14": rsi(bars, idx, 14),
-        "atr14": atr(bars, idx, 14),
+        "atr14": a14,
+        "atr_pct": round(a14 / close * 100, 2) if a14 and close > 0 else 0,
+        "roc5": roc(bars, idx, 5),
+        "roc20": roc(bars, idx, 20),
         "trend": trend_label(bars, idx),
         "volume": bars[idx].get("volume", 0),
     }
+    if idx >= 5:
+        recent = [float(bars[i]["c"]) for i in range(idx - 4, idx + 1)]
+        result["last5"] = [round(p, 2) for p in recent]
+    return result
 
 
 def market_clock() -> dict[str, str]:

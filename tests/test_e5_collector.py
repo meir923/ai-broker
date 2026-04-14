@@ -105,7 +105,8 @@ class TestTechnicals:
     def test_keys_present(self):
         bars = _bars(50)
         t = technicals_for_symbol(bars, 49)
-        assert set(t.keys()) == {"price", "ma20", "rsi14", "atr14", "trend", "volume"}
+        expected = {"price", "ma20", "ma50", "rsi14", "atr14", "atr_pct", "roc5", "roc20", "trend", "volume", "last5"}
+        assert set(t.keys()) == expected
 
     def test_price_correct(self):
         bars = _bars(50, base=200)
