@@ -164,6 +164,7 @@
       font-size: 0.88rem;
       font-weight: 700;
       margin-top: 0.1rem;
+      font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
       font-variant-numeric: tabular-nums;
     }
 
@@ -638,6 +639,11 @@
       border-bottom: 1px solid var(--line);
       text-align: right;
     }
+    table.trades td.num {
+      font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
+    }
     table.trades th {
       color: var(--muted);
       font-weight: 600;
@@ -665,6 +671,27 @@
     .pos-pyramid { color: #a78bfa; font-size: 0.75rem; font-weight: 700; }
     .exec-ok { color: #4ade80; }
     .exec-block { color: #fb7185; }
+
+    /* ── Connection indicator ── */
+    .conn-banner {
+      display: none;
+      padding: 0.45rem 1rem;
+      background: rgba(251, 113, 133, 0.18);
+      border: 1px solid rgba(251, 113, 133, 0.4);
+      border-radius: 8px;
+      color: var(--danger);
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 0.6rem;
+    }
+    .conn-banner.visible { display: block; }
+
+    /* ── Responsive table wrapper ── */
+    .table-wrap { overflow-x: auto; }
+
+    /* ── Button loading state ── */
+    .btn-loading { opacity: 0.7; pointer-events: none; }
 
     /* ── Trade detail (inline expand) ── */
     .trade-detail-row td {
@@ -1198,6 +1225,7 @@
       </div>
 
       <div class="positions-strip" id="paper-positions-strip" aria-label="פוזיציות פתוחות"></div>
+      <div class="conn-banner" id="paper-conn-banner" aria-live="polite">אין חיבור לשרת — בודק מחדש...</div>
       <p class="error-msg" id="paper-error" aria-live="polite"></p>
 
       <!-- ────── Trades table ────── -->
@@ -1305,6 +1333,7 @@
         box-shadow:0 2px 8px rgba(0,0,0,0.2);
       "></div>
 
+      <div class="conn-banner" id="agent-conn-banner" aria-live="polite">אין חיבור לשרת — בודק מחדש...</div>
       <p id="planb-error" class="error-msg" aria-live="polite"></p>
 
       <div class="controls-bar" style="flex-wrap:wrap;gap:0.6rem;">
@@ -1724,6 +1753,7 @@
       if (trEl) trEl.textContent = _agentFmtSignedPnl(_agentLiveTroughPnl);
     }
 
+    let _clockLastHtml = "";
     function _startAgentClock() {
       if (_agentClockTimer) return;
       const _chip = (icon, label, value, color) =>
@@ -1738,6 +1768,7 @@
         if (!el) return;
         const mode = document.getElementById("agent-mode")?.value || "sim";
         const pad = n => String(n).padStart(2, "0");
+        let html = "";
         if (mode === "sim") {
           if (_agentThinking) {
             const elapsed = (Date.now() - _agentThinkStart) / 1000;
@@ -1771,7 +1802,7 @@
                 "<span style='color:#4ade80;font-weight:600;font-size:0.82rem;'>✓ הסתיים (" + _agentSimStep + " צעדים)</span>" +
               "</div>";
           }
-          el.innerHTML =
+          html =
             _chip("\u{1F4C5}", "", _agentSimDate || "---", "#e2e8f0") + _sep +
             _chip("\u{1F552}", "", simTimeStr, "#a78bfa") + _sep +
             _chip("", "צעד", _agentSimStep + "/" + _agentSimTotal, "#38bdf8") + _sep +
@@ -1791,7 +1822,7 @@
           else if (nyMin >= 240 && nyMin < 570) { mktStatus = "טרום מסחר"; mktColor = "#facc15"; }
           else if (nyMin >= 960 && nyMin < 1200) { mktStatus = "לאחר מסחר"; mktColor = "#facc15"; }
           else { mktStatus = "שוק סגור"; mktColor = "#fb7185"; }
-          el.innerHTML =
+          html =
             _chip("\u{1F1FA}\u{1F1F8}", "", nyStr, "#a78bfa") + _sep +
             _chip("\u{1F1EE}\u{1F1F1}", "", ilStr, "#38bdf8") + _sep +
             "<div style='display:flex;align-items:center;gap:0.3rem;'>" +
@@ -1800,6 +1831,7 @@
               "<span style='color:" + mktColor + ";font-weight:700;font-size:0.82rem;'>" + mktStatus + "</span>" +
             "</div>";
         }
+        if (html !== _clockLastHtml) { el.innerHTML = html; _clockLastHtml = html; }
       }
       tick();
       _agentClockTimer = setInterval(() => { tick(); if (_agentThinking || _agentRunning) _agentAnimatePositions(); }, 500);
@@ -2013,14 +2045,22 @@
         tr.setAttribute("data-step", t.step);
         tr.setAttribute("data-sym", t.symbol);
         tr.setAttribute("data-act", t.action);
-        tr.innerHTML =
-          "<td>" + _agentTradeCount + "</td>" +
-          "<td>" + escapeHtml(t.date || "\u2014") + "</td>" +
-          "<td>" + escapeHtml(t.symbol || "") + "</td>" +
-          "<td style=\"color:" + color + ";font-weight:700;\">" + label + "</td>" +
-          "<td>" + (t.price != null ? "$" + Number(t.price).toFixed(2) : "\u2014") + "</td>" +
-          "<td>" + (t.qty || "") + "</td>" +
-          "<td style=\"direction:rtl;\">" + escapeHtml(t.reason || "") + "</td>";
+        const cells = [
+          [String(_agentTradeCount), ""],
+          [t.date || "\u2014", ""],
+          [t.symbol || "", ""],
+          [label, "color:" + color + ";font-weight:700"],
+          [t.price != null ? "$" + Number(t.price).toFixed(2) : "\u2014", ""],
+          [String(t.qty || ""), ""],
+          [t.reason || "", "direction:rtl"]
+        ];
+        for (const [text, style] of cells) {
+          const td = document.createElement("td");
+          td.textContent = text;
+          if (style) td.style.cssText = style;
+          if (text.startsWith("$") || !isNaN(text)) td.classList.add("num");
+          tr.appendChild(td);
+        }
         tbody.prepend(tr);
       }
     }
@@ -2152,9 +2192,11 @@
       async function doOneTick() {
         if (!_agentRunning || _agentBusy) return;
         _agentBusy = true;
+        const agBanner = document.getElementById("agent-conn-banner");
         try {
           const d = await agentDoTick();
           _agentErrorCount = 0;
+          if (agBanner) agBanner.classList.remove("visible");
           if (!d.running) {
             agentStopLoop();
             agentLog("<strong>\u05D4\u05E1\u05D5\u05DB\u05DF \u05E1\u05D9\u05D9\u05DD.</strong>");
@@ -2162,6 +2204,7 @@
         } catch (e) {
           _agentErrorCount++;
           agentLog("\u05E9\u05D2\u05D9\u05D0\u05D4 (" + _agentErrorCount + "): " + escapeHtml(e.message || String(e)));
+          if (agBanner) agBanner.classList.add("visible");
           if (_agentErrorCount >= 5) {
             agentLog("<strong>\u05E2\u05E6\u05D9\u05E8\u05D4 \u05D0\u05D7\u05E8\u05D9 5 \u05E9\u05D2\u05D9\u05D0\u05D5\u05EA \u05E8\u05E6\u05D5\u05E4\u05D5\u05EA.</strong>");
             agentStopLoop();
@@ -2224,6 +2267,8 @@
 
     async function agentFastForward() {
       const err = document.getElementById("planb-error");
+      const ffBtn = document.getElementById("agent-btn-ff");
+      if (ffBtn) { ffBtn.disabled = true; ffBtn.classList.add("btn-loading"); ffBtn.textContent = "מריץ…"; }
       try {
         _agentFastForwarding = true;
         agentSetButtons(true);
@@ -2266,6 +2311,7 @@
         _agentThinking = false;
         _agentFastForwarding = false;
         agentStopLoop();
+        if (ffBtn) { ffBtn.disabled = false; ffBtn.classList.remove("btn-loading"); ffBtn.textContent = "הרצה מהירה"; }
       }
     }
 
@@ -2422,14 +2468,17 @@
     }
 
     async function refreshPaper() {
+      const banner = document.getElementById("paper-conn-banner");
       try {
         const s = await fetchPaperStatus();
         renderPaperPanel(s);
         const err = document.getElementById("paper-error");
         if (err) err.textContent = "";
+        if (banner) banner.classList.remove("visible");
       } catch (e) {
         const err = document.getElementById("paper-error");
         if (err) err.textContent = "שגיאת חיבור: " + (e.message || String(e));
+        if (banner && e.message !== "Not Found") banner.classList.add("visible");
       }
     }
 
@@ -2531,7 +2580,7 @@
       const strip = document.getElementById("paper-positions-strip");
       if (strip && Array.isArray(s.positions) && s.positions.length) {
         const sorted = [...s.positions].sort((a, b) => a.symbol.localeCompare(b.symbol));
-        strip.innerHTML = sorted.map(p => {
+        const newPosHtml = sorted.map(p => {
           const cls = p.side === "LONG" ? "long" : "short";
           const arrow = p.side === "LONG" ? "\u25B2" : "\u25BC";
           const pnlPct = p.pnl_pct != null ? ` ${p.pnl_pct >= 0 ? "+" : ""}${p.pnl_pct.toFixed(1)}%` : "";
@@ -2545,8 +2594,9 @@
           const title = `${p.symbol}: ${p.side} ${Math.abs(p.qty)} @ $${p.avg_px_usd} lev:${p.symbol_leverage || "?"}x${sentTitle}${stopTxt}${tgtTxt}${stratTxt}`;
           return `<span class="pos-chip ${cls}" title="${escapeHtml(title)}">${arrow} ${escapeHtml(p.symbol)}${levTxt}${pnlPct}${sentIcon}</span>`;
         }).join("");
+        if (strip.innerHTML !== newPosHtml) strip.innerHTML = newPosHtml;
       } else if (strip) {
-        strip.innerHTML = "";
+        if (strip.innerHTML !== "") strip.innerHTML = "";
       }
 
       // Error
@@ -2585,14 +2635,14 @@
         const ptClass = pt === "LONG" ? "pos-long" : pt === "SHORT" ? "pos-short" : pt === "COVER" ? "pos-cover" : pt === "PYRAMID" ? "pos-pyramid" : "pos-close";
         const slTp = (t.stop || t.target) ? `${escapeHtml(String(t.stop ?? "—"))} / ${escapeHtml(String(t.target ?? "—"))}` : "—";
         return `<tr class="trade-row" data-idx="${i}" tabindex="0">` +
-          `<td>${seq}</td>` +
+          `<td class="num">${seq}</td>` +
           `<td>${escapeHtml(String(t.sim_date ?? t.time ?? ""))}</td>` +
           `<td><strong>${escapeHtml(String(t.symbol ?? ""))}</strong></td>` +
           `<td><span class="${ptClass}">${escapeHtml(pt)}</span></td>` +
           `<td class="${sideClass}">${escapeHtml(String(t.side ?? ""))}</td>` +
-          `<td>${escapeHtml(String(t.qty ?? ""))}</td>` +
-          `<td>$${escapeHtml(String(t.ref_price_usd ?? ""))}</td>` +
-          `<td>${slTp}</td>` +
+          `<td class="num">${escapeHtml(String(t.qty ?? ""))}</td>` +
+          `<td class="num">$${escapeHtml(String(t.ref_price_usd ?? ""))}</td>` +
+          `<td class="num">${slTp}</td>` +
           `<td class="${resClass}">${resTxt}</td></tr>`;
       }).join("");
       if (savedExpand >= 0 && savedExpand < trs.length) {
@@ -2807,11 +2857,13 @@
 
     /* ── Event listeners ── */
     document.getElementById("btn-paper-start")?.addEventListener("click", async () => {
+      const btn = document.getElementById("btn-paper-start");
       const dep = parseFloat(document.getElementById("paper-deposit")?.value || "0");
       const lev = parseFloat(document.getElementById("paper-leverage")?.value || "2");
       const startDate = document.getElementById("paper-start-date")?.value || null;
       const errEl = document.getElementById("paper-error");
       if (!Number.isFinite(dep) || dep < 100) { if (errEl) errEl.textContent = "הפקדה חייבת להיות >= 100"; return; }
+      if (btn) { btn.disabled = true; btn.classList.add("btn-loading"); btn.textContent = "מתחבר…"; }
       try {
         const body = { deposit_usd: dep, interval_sec: 2, leverage: lev };
         if (startDate) body.start_date = startDate;
@@ -2820,6 +2872,8 @@
         if (errEl) errEl.textContent = "";
       } catch (e) {
         if (errEl) errEl.textContent = "שגיאה: " + e.message;
+      } finally {
+        if (btn) { btn.disabled = false; btn.classList.remove("btn-loading"); btn.textContent = "התחל בדיקה"; }
       }
     });
 
@@ -3737,9 +3791,11 @@
 
     async function connectBroker() {
       const errEl = document.getElementById("trading-broker-error");
+      const connBtn = document.getElementById("btn-trading-connect");
       const apiKey = document.getElementById("trading-api-key").value.trim();
       const secretKey = document.getElementById("trading-secret-key").value.trim();
       errEl.textContent = "";
+      if (connBtn) { connBtn.disabled = true; connBtn.classList.add("btn-loading"); connBtn.textContent = "מתחבר…"; }
 
       try {
         const r = await fetch("/api/alpaca/account");
@@ -3767,6 +3823,8 @@
         }
       } catch (e) {
         errEl.textContent = "שגיאה: " + e.message;
+      } finally {
+        if (connBtn) { connBtn.disabled = false; connBtn.classList.remove("btn-loading"); connBtn.textContent = "התחבר"; }
       }
     }
 
