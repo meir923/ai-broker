@@ -15,6 +15,7 @@ class RuntimeState(BaseModel):
     dry_run: bool = True
     kill_switch: bool = False
     daily_pnl_usd: float = 0.0
+    equity_usd: float = 0.0
     trades_today: int = 0
     positions: list[dict[str, Any]] = Field(default_factory=list)
     open_orders: list[dict[str, Any]] = Field(default_factory=list)

@@ -60,6 +60,8 @@ class RiskConfig(BaseModel):
     max_daily_loss_usd: float = Field(gt=0)
     max_notional_per_trade_usd: float = Field(gt=0)
     max_trades_per_day: int = Field(ge=0)
+    max_position_exposure_pct: float = Field(default=25.0, ge=0, le=100)
+    max_open_orders: int = Field(default=20, ge=0)
     kill_switch: bool = False
     allowed_symbols: list[str] = Field(default_factory=list)
 

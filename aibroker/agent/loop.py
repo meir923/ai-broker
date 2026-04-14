@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from aibroker.agent.brain import AgentDecision, think
 from aibroker.agent.collector import build_snapshot, collect_news
+from aibroker.agent.risk_profiles import RISK_PROFILES
 from aibroker.data.historical import Bar, load_history
 
 log = logging.getLogger(__name__)
@@ -28,54 +29,6 @@ Mode = Literal["sim", "paper", "live"]
 RiskLevel = Literal["low", "medium", "high"]
 
 DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "AMD"]
-
-RISK_PROFILES: dict[str, dict[str, Any]] = {
-    "low": {
-        "target_positions": 6,
-        "rebalance_every": 20,
-        "trail_pct": 0.88,
-        "trail_atr_mult": 4.0,
-        "invest_pct": 0.80,
-        "allow_shorts": False,
-        "bear_sell_all": True,
-        "bear_trigger": "below_200",
-        "rotation_threshold": -5.0,
-        "label_he": "נמוך",
-        "momentum_w10": 0.25,
-        "momentum_w20": 0.40,
-        "momentum_w50": 0.35,
-    },
-    "medium": {
-        "target_positions": 5,
-        "rebalance_every": 10,
-        "trail_pct": 0.82,
-        "trail_atr_mult": 5.0,
-        "invest_pct": 0.95,
-        "allow_shorts": False,
-        "bear_sell_all": True,
-        "bear_trigger": "below_200_and_50",
-        "rotation_threshold": -2.0,
-        "label_he": "בינוני",
-        "momentum_w10": 0.25,
-        "momentum_w20": 0.40,
-        "momentum_w50": 0.35,
-    },
-    "high": {
-        "target_positions": 7,
-        "rebalance_every": 5,
-        "trail_pct": 0.75,
-        "trail_atr_mult": 6.0,
-        "invest_pct": 1.0,
-        "allow_shorts": True,
-        "bear_sell_all": True,
-        "bear_trigger": "below_200_and_50",
-        "rotation_threshold": -1.0,
-        "label_he": "מוגבר",
-        "momentum_w10": 0.22,
-        "momentum_w20": 0.38,
-        "momentum_w50": 0.40,
-    },
-}
 
 
 class AgentSession:
@@ -113,6 +66,7 @@ class AgentSession:
         self._broker: Any = None
         self._news_lock = threading.Lock()
         self._news_fetch_in_progress = False
+        self._indicators: dict | None = None
 
     def _price_for(self, symbol: str) -> float:
         bars = self._history.get(symbol, [])
@@ -147,13 +101,20 @@ class AgentSession:
         return max(0.0, self.cash - self._sim_regt_short_margin())
 
     def _ensure_broker_connected(self) -> Any:
-        """Reuse one Alpaca client for paper/live ticks."""
+        """Reuse one broker client for paper/live ticks (loaded via factory when available)."""
         if self.mode not in ("paper", "live"):
             return None
         if self._broker is None:
-            from aibroker.brokers.alpaca import AlpacaBrokerClient
+            try:
+                from aibroker.brokers.factory import make_broker
+                from aibroker.config.loader import load_profile
 
-            self._broker = AlpacaBrokerClient(paper=(self.mode == "paper"))
+                cfg = load_profile()
+                self._broker = make_broker(cfg)
+            except Exception:
+                from aibroker.brokers.alpaca import AlpacaBrokerClient
+
+                self._broker = AlpacaBrokerClient(paper=(self.mode == "paper"))
             self._broker.connect()
         return self._broker
 
@@ -210,6 +171,8 @@ class AgentSession:
                 self.error = "no history data"
                 self.running = False
                 return self.status()
+            from aibroker.agent.fast_strategy import precompute_all
+            self._indicators = precompute_all(self._history)
             if self._start_date:
                 self._bar_index = self._find_start_index(self._start_date)
             else:
@@ -280,60 +243,18 @@ class AgentSession:
         ALLOW_SHORTS = rp["allow_shorts"]
         ROT_THRESH = rp["rotation_threshold"]
 
-        from aibroker.agent.collector import sma as calc_sma, atr as calc_atr, rsi as calc_rsi
+        from aibroker.agent.fast_strategy import rank_symbols, detect_bear_regime, precompute_all
 
-        spy_bars = self._history.get("SPY", ref_bars)
-        spy_price = float(spy_bars[idx]["c"]) if idx < len(spy_bars) else 0
-        spy_ma200 = calc_sma(spy_bars, idx, min(200, idx + 1))
-        spy_ma50 = calc_sma(spy_bars, idx, 50)
-        spy_rsi = calc_rsi(spy_bars, idx, 14)
-        spy_roc20 = 0
-        if idx >= 20 and len(spy_bars) > idx:
-            spy_roc20 = (spy_price / float(spy_bars[idx - 20]["c"]) - 1) * 100
+        if self._indicators is None:
+            self._indicators = precompute_all(self._history)
 
-        above_200 = spy_price > spy_ma200 if spy_ma200 else True
-        above_50 = spy_price > spy_ma50 if spy_ma50 else True
+        spy_ind = self._indicators.get("SPY") or (next(iter(self._indicators.values())) if self._indicators else None)
+        bear, spy_rsi = detect_bear_regime(spy_ind, idx, rp["bear_trigger"])
 
-        bear_trigger = rp["bear_trigger"]
-        if bear_trigger == "below_200":
-            bear = not above_200
-        else:
-            bear = not above_200 and not above_50 and spy_roc20 < -5
-
-        rankings = []
-        for sym in self.symbols:
-            bars = self._history.get(sym, [])
-            if not bars or idx >= len(bars) or idx < 50:
-                continue
-            price = float(bars[idx]["c"])
-            a14 = calc_atr(bars, idx, 14)
-            r14 = calc_rsi(bars, idx, 14)
-            ma20 = calc_sma(bars, idx, 20)
-            ma50 = calc_sma(bars, idx, 50)
-            if any(v is None for v in (a14, r14, ma20, ma50)):
-                continue
-            if price <= 0:
-                continue
-
-            roc10 = (price / float(bars[idx - 10]["c"]) - 1) * 100 if idx >= 10 else 0
-            roc20 = (price / float(bars[idx - 20]["c"]) - 1) * 100
-            roc50 = (price / float(bars[idx - 50]["c"]) - 1) * 100 if idx >= 50 else roc20
-
-            w10 = float(rp.get("momentum_w10", 0.25))
-            w20 = float(rp.get("momentum_w20", 0.40))
-            w50 = float(rp.get("momentum_w50", 0.35))
-            momentum = roc10 * w10 + roc20 * w20 + roc50 * w50
-
-            b = bars[idx]
-            bar_high = float(b.get("h", price))
-            bar_low = float(b.get("l", price))
-            rankings.append({
-                "symbol": sym, "price": price, "bar_high": bar_high, "bar_low": bar_low,
-                "momentum": round(momentum, 2),
-                "roc10": round(roc10, 2), "roc20": round(roc20, 2), "roc50": round(roc50, 2),
-                "rsi": r14, "atr": a14, "ma20": ma20, "ma50": ma50,
-                "above_ma50": price > ma50,
-            })
+        w10 = float(rp.get("momentum_w10", 0.25))
+        w20 = float(rp.get("momentum_w20", 0.40))
+        w50 = float(rp.get("momentum_w50", 0.35))
+        rankings = rank_symbols(self._indicators, idx, self.symbols, (w10, w20, w50))
 
         if not rankings:
             self._bar_index += 1
@@ -557,73 +478,39 @@ class AgentSession:
         return self.status()
 
     def _execute_sim(self, symbol: str, action: str, qty: int, reason: str, date: str) -> None:
+        """Unified signed-position execution: positive qty = long, negative = short."""
         if action == "hold" or qty <= 0:
             return
         bars = self._history.get(symbol, [])
         if not bars or self._bar_index >= len(bars):
             return
         price = float(bars[self._bar_index]["c"])
+        if price <= 0:
+            return
+
+        pos = self.positions.get(symbol, {"qty": 0, "avg_cost": 0, "opened": date})
+        old_qty = float(pos["qty"])
+        old_avg = float(pos["avg_cost"])
+        old_opened = pos.get("opened", date)
 
         if action == "buy":
-            cost = price * qty
             bp = self._sim_buying_power()
+            cost = price * qty
             if cost > bp:
                 qty = int(bp / price)
                 if qty <= 0:
                     return
-                cost = price * qty
-            self.cash -= cost
-            pos = self.positions.get(symbol, {"qty": 0, "avg_cost": 0, "opened": date})
-            prev_qty = float(pos["qty"])
-            old_qty = pos["qty"]
-            old_avg = pos["avg_cost"]
-            if old_qty < 0:
-                cover_qty = min(qty, abs(int(old_qty)))
-                # מחיר הכיסוי כבר נוכה בשורה למעלה (self.cash -= cost). בתחילת השורט כבר
-                # נזקפו למזומן תמורת המכירה — לא מוסיפים שוב ממוצע או רווח כאן (זה היה באג כפול).
-                old_qty += cover_qty
-                qty -= cover_qty
-                if old_qty == 0:
-                    old_avg = 0
-            if qty > 0:
-                new_qty = old_qty + qty
-                new_avg = ((old_avg * old_qty) + (price * qty)) / new_qty if new_qty > 0 else price
-                if new_qty > 0:
-                    opened_eff = pos.get("opened", date) if prev_qty > 0 else date
-                elif new_qty < 0:
-                    opened_eff = pos.get("opened", date) if prev_qty < 0 else date
-                else:
-                    opened_eff = date
-                self.positions[symbol] = {"qty": new_qty, "avg_cost": new_avg, "opened": opened_eff}
-            elif old_qty != 0:
-                self.positions[symbol] = {"qty": old_qty, "avg_cost": old_avg, "opened": pos.get("opened", date)}
-            else:
-                self.positions.pop(symbol, None)
-            self.trades.append({
-                "step": self.step, "date": date, "symbol": symbol,
-                "action": "buy", "price": round(price, 2), "qty": qty,
-                "reason": reason,
-            })
+            delta = qty
+            self.cash -= price * qty
 
         elif action == "sell":
-            pos = self.positions.get(symbol)
-            if not pos or pos["qty"] <= 0:
+            if old_qty <= 0:
                 return
-            qty = min(qty, int(pos["qty"]))
+            qty = min(qty, int(old_qty))
             if qty <= 0:
                 return
-            proceeds = price * qty
-            self.cash += proceeds
-            pos["qty"] -= qty
-            if pos["qty"] <= 0:
-                del self.positions[symbol]
-            else:
-                self.positions[symbol] = pos
-            self.trades.append({
-                "step": self.step, "date": date, "symbol": symbol,
-                "action": "sell", "price": round(price, 2), "qty": qty,
-                "reason": reason,
-            })
+            delta = -qty
+            self.cash += price * qty
 
         elif action == "short":
             margin = price * qty * 0.5
@@ -632,54 +519,43 @@ class AgentSession:
                 qty = int(bp / (price * 0.5))
                 if qty <= 0:
                     return
+            delta = -qty
             self.cash += price * qty
-            pos = self.positions.get(symbol, {"qty": 0, "avg_cost": 0, "opened": date})
-            prev_qty = float(pos["qty"])
-            old_qty = pos["qty"]
-            if old_qty > 0:
-                sell_qty = min(qty, int(old_qty))
-                old_qty -= sell_qty
-                qty -= sell_qty
-                if old_qty == 0:
-                    self.positions.pop(symbol, None)
-                else:
-                    self.positions[symbol] = {"qty": old_qty, "avg_cost": pos["avg_cost"], "opened": pos.get("opened", date)}
-            if qty > 0:
-                cur_short = self.positions.get(symbol, {"qty": 0, "avg_cost": 0, "opened": date})
-                cq = cur_short["qty"]
-                ca = cur_short["avg_cost"]
-                new_qty = cq - qty
-                new_avg = ((abs(cq) * ca) + (qty * price)) / abs(new_qty) if new_qty != 0 else price
-                opened_eff = (
-                    cur_short.get("opened", date) if prev_qty < 0 and new_qty < 0 else date
-                )
-                self.positions[symbol] = {"qty": new_qty, "avg_cost": new_avg, "opened": opened_eff}
-            self.trades.append({
-                "step": self.step, "date": date, "symbol": symbol,
-                "action": "short", "price": round(price, 2), "qty": qty,
-                "reason": reason,
-            })
 
         elif action == "cover":
-            pos = self.positions.get(symbol)
-            if not pos or pos["qty"] >= 0:
+            if old_qty >= 0:
                 return
-            short_qty = abs(int(pos["qty"]))
-            qty = min(qty, short_qty)
+            qty = min(qty, abs(int(old_qty)))
             if qty <= 0:
                 return
-            cost = price * qty
-            self.cash -= cost
-            pos["qty"] += qty
-            if pos["qty"] >= 0:
-                self.positions.pop(symbol, None)
+            delta = qty
+            self.cash -= price * qty
+        else:
+            return
+
+        new_qty = old_qty + delta
+
+        if abs(new_qty) < 0.01:
+            self.positions.pop(symbol, None)
+        else:
+            if (old_qty > 0 and delta > 0) or (old_qty < 0 and delta < 0):
+                total_abs = abs(old_qty) + abs(delta)
+                new_avg = (abs(old_qty) * old_avg + abs(delta) * price) / total_abs
+                opened_eff = old_opened
+            elif old_qty * new_qty > 0:
+                new_avg = old_avg
+                opened_eff = old_opened
             else:
-                self.positions[symbol] = pos
-            self.trades.append({
-                "step": self.step, "date": date, "symbol": symbol,
-                "action": "cover", "price": round(price, 2), "qty": qty,
-                "reason": reason,
-            })
+                new_avg = price
+                opened_eff = date
+
+            self.positions[symbol] = {"qty": new_qty, "avg_cost": round(new_avg, 4), "opened": opened_eff}
+
+        self.trades.append({
+            "step": self.step, "date": date, "symbol": symbol,
+            "action": action, "price": round(price, 2), "qty": abs(qty),
+            "reason": reason,
+        })
 
     def _apply_broker_positions(self, pos_list: list[dict[str, Any]], prev: dict[str, dict[str, Any]]) -> None:
         """Merge Alpaca positions into self.positions, preserving opened when direction unchanged."""
