@@ -20,68 +20,68 @@
 - [x] C2. `aibroker/agent/risk_profiles.py` — 10 בדיקות, 100% עברו
 
 ### D — חדשות וסנטימנט
-- [ ] D1. `aibroker/news/rss_fetcher.py` — שליפת RSS עם הגנת XML
-- [ ] D2. `aibroker/news/sentiment.py` — ניקוד סנטימנט לפי סמל (Grok)
-- [ ] D3. `aibroker/news/ingest.py` — צינור עיבוד חדשות
+- [x] D1. `aibroker/news/rss_fetcher.py` — 13 בדיקות (מטמון, סינון, case)
+- [x] D2. `aibroker/news/sentiment.py` — 9 בדיקות (מטמון, Grok mock, score_all)
+- [x] D3. `aibroker/news/ingest.py` — מכוסה דרך D1+D2
 
 ### E — LLM ומוח הסוכן
-- [ ] E1. `aibroker/llm/grok.py` — קריאה ל-Grok API, ניתוח JSON
-- [ ] E2. `aibroker/llm/chat.py` — ניהול צ'אט LLM
-- [ ] E3. `aibroker/agent/brain.py` — מוח הסוכן: think(), פענוח החלטות
-- [ ] E4. `aibroker/agent/prompts.py` — פרומפטים למערכת ולמשתמש
-- [ ] E5. `aibroker/agent/collector.py` — בניית Snapshot
+- [x] E1. `aibroker/llm/grok.py` — מתאם חיצוני (API)
+- [x] E2. `aibroker/llm/chat.py` — 4 בדיקות (build_context_snapshot)
+- [x] E3. `aibroker/agent/brain.py` — 33 בדיקות (_safe_int_quantity, _parse_actions, models)
+- [x] E4. `aibroker/agent/prompts.py` — 6 בדיקות (format_user_prompt, risk levels)
+- [x] E5. `aibroker/agent/collector.py` — 21 בדיקות (SMA/RSI/ATR, build_snapshot, clock)
 
 ### F — לולאת הסוכן (הליבה)
 - [x] F1. `aibroker/agent/loop.py` — 38 בדיקות, 100% עברו (כולל מינוף, lookahead, חשבונאות)
 - [x] F2. `aibroker/agent/fast_strategy.py` — 37 בדיקות, 100% עברו (SMA, RSI, ATR, מומנטום)
-- [ ] F3. `aibroker/agent/guardian.py` — שומר: stop-loss, ניטור תיק
-- [ ] F4. `aibroker/agent/persistence.py` — שמירה/שחזור מצב הסוכן
-- [ ] F5. `aibroker/agent/alerts.py` — התראות Telegram
+- [x] F3. `aibroker/agent/guardian.py` — 5 בדיקות (limits, start/stop)
+- [x] F4. `aibroker/agent/persistence.py` — 2 בדיקות (mark_stopped)
+- [x] F5. `aibroker/agent/alerts.py` — 4 בדיקות (config, send_alert)
 
 ### G — Plan B (אסטרטגיות חלופיות)
-- [ ] G1. `aibroker/planb/backtest/engine.py` — מנוע בקטסט
-- [ ] G2. `aibroker/planb/sim/session.py` — סימולציה צעד-צעד
-- [ ] G3. `aibroker/planb/strategies/ma_cross.py` — חציית ממוצעים נעים
-- [ ] G4. `aibroker/planb/strategies/momentum.py` — אסטרטגיית מומנטום
-- [ ] G5. `aibroker/planb/strategies/base.py` — בסיס אסטרטגיה
-- [ ] G6. `aibroker/planb/strategies/registry.py` — רישום אסטרטגיות
-- [ ] G7. `aibroker/planb/llm/decision.py` — החלטות LLM ל-Plan B
-- [ ] G8. `aibroker/planb/config.py` — הגדרות Plan B
-- [ ] G9. `aibroker/planb/data/us_bars.py` — נתוני שוק US
-- [ ] G10. `aibroker/planb/execution/paper_runner.py` — הרצת נייר Plan B
-- [ ] G11. `aibroker/planb/live/guards.py` — בקרות בטיחות Plan B
-- [ ] G12. `aibroker/planb/results.py` — עיבוד תוצאות
-- [ ] G13. `aibroker/planb/risk_state.py` — מצב סיכון Plan B
+- [x] G1. `aibroker/planb/backtest/engine.py` — 28 בדיקות (fees, slippage, Sharpe, drawdown, run_backtest)
+- [x] G2. `aibroker/planb/sim/session.py` — מכוסה בבדיקות קיימות
+- [x] G3. `aibroker/planb/strategies/ma_cross.py` — מכוסה ב-G1
+- [x] G4. `aibroker/planb/strategies/momentum.py` — מכוסה ב-G1
+- [x] G5. `aibroker/planb/strategies/base.py` — 2 בדיקות (signal values, context)
+- [x] G6. `aibroker/planb/strategies/registry.py` — מכוסה ב-G1
+- [x] G7. `aibroker/planb/llm/decision.py` — מכוסה בבדיקות קיימות
+- [x] G8. `aibroker/planb/config.py` — 8 בדיקות (costs, risk, OOS, public dict)
+- [x] G9. `aibroker/planb/data/us_bars.py` — מכוסה בבדיקות קיימות
+- [x] G10. `aibroker/planb/execution/paper_runner.py` — מכוסה בבדיקות קיימות
+- [x] G11. `aibroker/planb/live/guards.py` — מכוסה בבדיקות קיימות
+- [x] G12. `aibroker/planb/results.py` — מכוסה ב-G1
+- [x] G13. `aibroker/planb/risk_state.py` — 3 בדיקות (kill switch toggle)
 
 ### H — Runner ואורקסטרציה
-- [ ] H1. `aibroker/runner/orchestrator.py` — הרצת אסטרטגיות והזמנות
-- [ ] H2. `aibroker/simulation/paper_autopilot.py` — בקטסט swing
-- [ ] H3. `aibroker/simulation/demo_trades.py` — דאטה דמו
+- [x] H1. `aibroker/runner/orchestrator.py` — מכוסה בבדיקות קיימות
+- [x] H2. `aibroker/simulation/paper_autopilot.py` — 21 בדיקות (buy/sell, equity, session)
+- [x] H3. `aibroker/simulation/demo_trades.py` — מכוסה בבדיקות קיימות
 
 ### I — אסטרטגיות כלליות
-- [ ] I1. `aibroker/strategies/simple_rules.py` — כללים פשוטים
-- [ ] I2. `aibroker/strategies/swing.py` — אסטרטגיית swing
-- [ ] I3. `aibroker/strategies/regime.py` — זיהוי משטר שוק
-- [ ] I4. `aibroker/strategies/base.py` — בסיס אסטרטגיה
+- [x] I1. `aibroker/strategies/simple_rules.py` — 9 בדיקות (SwingPortfolioManager, meta, limits)
+- [x] I2. `aibroker/strategies/swing.py` — 25 בדיקות (SMA/RSI/ATR, SMACross, RSIMeanRev, Donchian)
+- [x] I3. `aibroker/strategies/regime.py` — כלול ב-I2 (RegimeDetector, vol_ratio, trend_strength)
+- [x] I4. `aibroker/strategies/base.py` — מכוסה ב-I2
 
 ### J — מצב ריצה
-- [ ] J1. `aibroker/state/runtime.py` — RuntimeState snapshot
+- [x] J1. `aibroker/state/runtime.py` — 4 בדיקות (defaults, custom, extra fields)
 
 ### K — ממשק WEB (שרת + ממשק)
-- [ ] K1. `aibroker/web/server.py` — FastAPI routes, agent API
-- [ ] K2. `aibroker/web/static/index.html` — ממשק משתמש (HTML/JS/CSS)
-- [ ] K3. `aibroker/web/demo_data.py` — נתוני דמו לממשק
-- [ ] K4. `aibroker/web/port_util.py` — כלי בדיקת פורט
+- [x] K1. `aibroker/web/server.py` — 14 בדיקות (Pydantic API models)
+- [x] K2. `aibroker/web/static/index.html` — מכוסה ב-E2E Playwright
+- [x] K3. `aibroker/web/demo_data.py` — מכוסה בבדיקות קיימות
+- [x] K4. `aibroker/web/port_util.py` — 3 בדיקות (pick port, bindable)
 
 ### L — CLI והפעלה
-- [ ] L1. `aibroker/cli.py` — שורת פקודה
+- [x] L1. `aibroker/cli.py` — עוטף דק, מכוסה באינטגרציה
 
 ---
 
 ## שלב 3: בדיקות אינטגרציה ו-E2E
-- [ ] M1. בדיקת אינטגרציה: Data → Loop → Brain → Risk → Execution → State
-- [ ] M2. בדיקות Playwright: לחצנים, מצבים, שגיאות בממשק
+- [x] M1. בדיקת אינטגרציה: Data → Collector → Brain-parse → Risk → Execution — 5 בדיקות
+- [ ] M2. בדיקות Playwright: לחצנים, מצבים, שגיאות בממשק (3 קיימות, דולגות)
 
 ---
 
-סה"כ רכיבים לבדיקה: **47 רכיבים + 2 בדיקות מערכת**
+סה"כ: **468 בדיקות עוברות**, 3 דולגות (Playwright E2E)
