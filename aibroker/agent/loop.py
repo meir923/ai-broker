@@ -213,7 +213,8 @@ class AgentSession:
             if self._start_date:
                 self._bar_index = self._find_start_index(self._start_date)
             else:
-                self._bar_index = max(50, min(len(list(self._history.values())[0]) - 100, 50))
+                first_len = len(list(self._history.values())[0])
+                self._bar_index = max(50, first_len - 100)
         else:
             self._history = load_history(self.symbols, bars=200)
             self._bar_index = max(0, len(list(self._history.values())[0]) - 1) if self._history else 0
@@ -516,6 +517,7 @@ class AgentSession:
         ref_bars = self._history.get("SPY", list(self._history.values())[0] if self._history else [])
         if self._bar_index >= max_len:
             self.running = False
+            self._persist_to_db()
             return self.status()
 
         sim_date = ref_bars[self._bar_index].get("date", str(self._bar_index)) if self._bar_index < len(ref_bars) else str(self._bar_index)
@@ -789,7 +791,10 @@ class AgentSession:
             qty_baseline = {p["symbol"]: float(p["qty"]) for p in pos_list}
             self._apply_broker_positions(pos_list, prev_state)
         except Exception as e:
-            log.warning("Pre-tick Alpaca sync failed: %s", e)
+            log.error("Pre-tick Alpaca sync failed, aborting tick: %s", e)
+            self.error = f"Alpaca sync: {e}"
+            self.step += 1
+            return self.status()
 
         try:
             decision = think(snapshot, allowed_symbols=self.symbols)
@@ -897,7 +902,7 @@ class AgentSession:
         if not self._db_session_id:
             return
         try:
-            from aibroker.data.storage import save_session_end, save_trades, save_decisions
+            from aibroker.data.storage import save_session_end, save_trades, save_decisions, _get_db, _sqlite_retry_write
             eq = self.equity()
             pnl = eq - self.initial_deposit
             pnl_pct = (pnl / self.initial_deposit * 100) if self.initial_deposit > 0 else 0
@@ -907,8 +912,17 @@ class AgentSession:
                 self._equity_peak - self.initial_deposit,
                 self._equity_trough - self.initial_deposit,
             )
-            save_trades(self._db_session_id, self.trades)
-            save_decisions(self._db_session_id, self.decisions[-50:])
+            sid = self._db_session_id
+
+            def _clean_and_insert() -> None:
+                db = _get_db()
+                db.execute("DELETE FROM trades WHERE session_id=?", (sid,))
+                db.execute("DELETE FROM decisions WHERE session_id=?", (sid,))
+                db.commit()
+
+            _sqlite_retry_write(_clean_and_insert)
+            save_trades(sid, self.trades)
+            save_decisions(sid, self.decisions[-50:])
             log.info("Session %d persisted to DB", self._db_session_id)
         except Exception as e:
             log.warning("Failed to persist session to DB: %s", e)

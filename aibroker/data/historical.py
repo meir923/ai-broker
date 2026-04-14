@@ -16,7 +16,7 @@ from typing import Any, TypedDict
 
 log = logging.getLogger(__name__)
 
-CACHE_DIR = Path("data/cache")
+CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
 BARS_DEFAULT = 750
 
 

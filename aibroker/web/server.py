@@ -804,7 +804,10 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
         from aibroker.agent.loop import AgentSession
 
         if _agent_session is not None:
-            _agent_session.running = False
+            try:
+                await asyncio.to_thread(_agent_session.stop)
+            except Exception:
+                _agent_session.running = False
         session = AgentSession(
             mode=body.mode,
             symbols=body.symbols,
@@ -857,7 +860,7 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
         session = _agent_session
         if session is None:
             return JSONResponse({"ok": True, "running": False})
-        out = session.stop()
+        out = await asyncio.to_thread(session.stop)
         try:
             from aibroker.agent.alerts import alert_agent_stopped
             alert_agent_stopped(out.get("equity", 0), out.get("pnl", 0), out.get("pnl_pct", 0), "ידני")

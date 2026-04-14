@@ -6,6 +6,7 @@ import logging
 import math
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from aibroker.data.historical import Bar
 
@@ -72,19 +73,17 @@ def technicals_for_symbol(bars: list[Bar], idx: int) -> dict[str, Any]:
 
 
 def market_clock() -> dict[str, str]:
-    now = datetime.now(timezone.utc)
-    ny_offset = -4
-    il_offset = 3
-    ny_hour = (now.hour + ny_offset) % 24
-    ny_min = now.minute
-    il_hour = (now.hour + il_offset) % 24
-    il_min = now.minute
+    ny_now = datetime.now(ZoneInfo("America/New_York"))
+    il_now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    ny_hour, ny_min = ny_now.hour, ny_now.minute
+    il_hour, il_min = il_now.hour, il_now.minute
 
-    if 9 * 60 + 30 <= ny_hour * 60 + ny_min < 16 * 60:
+    ny_minutes = ny_hour * 60 + ny_min
+    if 9 * 60 + 30 <= ny_minutes < 16 * 60:
         status = "OPEN"
-    elif 4 * 60 <= ny_hour * 60 + ny_min < 9 * 60 + 30:
+    elif 4 * 60 <= ny_minutes < 9 * 60 + 30:
         status = "PRE_MARKET"
-    elif 16 * 60 <= ny_hour * 60 + ny_min < 20 * 60:
+    elif 16 * 60 <= ny_minutes < 20 * 60:
         status = "AFTER_HOURS"
     else:
         status = "CLOSED"

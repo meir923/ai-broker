@@ -1584,6 +1584,7 @@
     let _paperPollTimer = null;
     let _realtimeTimer = null;
     let _realtimeRunning = false;
+    let _realtimeStepBusy = false;
     function destroyChart(id) {
       if (charts[id]) { charts[id].destroy(); delete charts[id]; }
     }
@@ -1622,6 +1623,7 @@
 
       if (id === "sec-simulation") {
         history.replaceState(null, "", "#simulation");
+        _stopAgentClock();
         if (!_realtimeRunning) startPaperPoll();
       } else if (id === "sec-planb") {
         history.replaceState(null, "", "#planb");
@@ -1629,8 +1631,10 @@
         planbOnTabEnter();
       } else if (id === "sec-trading") {
         history.replaceState(null, "", "#trading");
+        _stopAgentClock();
         stopPaperPoll();
       } else {
+        _stopAgentClock();
         if (!_realtimeRunning) stopPaperPoll();
         if (["#simulation", "#planb", "#trading"].includes(location.hash))
           history.replaceState(null, "", location.pathname);
@@ -1774,11 +1778,14 @@
             barHtml + statusHtml;
         } else {
           const now = new Date();
-          const utcH = now.getUTCHours(), utcM = now.getUTCMinutes(), utcS = now.getUTCSeconds();
-          const nyH = (utcH - 4 + 24) % 24, ilH = (utcH + 3) % 24;
-          const nyStr = pad(nyH) + ":" + pad(utcM) + ":" + pad(utcS);
-          const ilStr = pad(ilH) + ":" + pad(utcM) + ":" + pad(utcS);
-          const nyMin = nyH * 60 + utcM;
+          const _nyParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(now);
+          const _ilParts = new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(now);
+          const _p = (pts, t) => parseInt((pts.find(p => p.type === t) || {}).value || "0");
+          const nyH = _p(_nyParts, "hour"), _nyM = _p(_nyParts, "minute"), _nyS = _p(_nyParts, "second");
+          const ilH = _p(_ilParts, "hour"), _ilM = _p(_ilParts, "minute"), _ilS = _p(_ilParts, "second");
+          const nyStr = pad(nyH) + ":" + pad(_nyM) + ":" + pad(_nyS);
+          const ilStr = pad(ilH) + ":" + pad(_ilM) + ":" + pad(_ilS);
+          const nyMin = nyH * 60 + _nyM;
           let mktStatus = "", mktColor = "#fb7185";
           if (nyMin >= 570 && nyMin < 960) { mktStatus = "שוק פתוח"; mktColor = "#4ade80"; }
           else if (nyMin >= 240 && nyMin < 570) { mktStatus = "טרום מסחר"; mktColor = "#facc15"; }
@@ -2336,8 +2343,10 @@
       const now = new Date();
       const ilTime = now.toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", second: "2-digit" });
       const nyTime = now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-      const nyHour = parseInt(now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false }));
-      const nyMin = now.getMinutes();
+      const _nyP = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(now);
+      const _pv = (pts, t) => parseInt((pts.find(p => p.type === t) || {}).value || "0");
+      const nyHour = _pv(_nyP, "hour");
+      const nyMin = _pv(_nyP, "minute");
       const nyDay = now.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" });
       const isWeekend = ["Sat", "Sun"].includes(nyDay);
       const marketOpen = !isWeekend && ((nyHour === 9 && nyMin >= 30) || (nyHour >= 10 && nyHour < 16));
@@ -2571,7 +2580,7 @@
         const seq = t.seq != null ? t.seq : i + 1;
         const pt = t.position_type || "";
         const ptClass = pt === "LONG" ? "pos-long" : pt === "SHORT" ? "pos-short" : pt === "COVER" ? "pos-cover" : pt === "PYRAMID" ? "pos-pyramid" : "pos-close";
-        const slTp = (t.stop || t.target) ? `${t.stop || "—"} / ${t.target || "—"}` : "—";
+        const slTp = (t.stop || t.target) ? `${escapeHtml(String(t.stop ?? "—"))} / ${escapeHtml(String(t.target ?? "—"))}` : "—";
         return `<tr class="trade-row" data-idx="${i}" tabindex="0">` +
           `<td>${seq}</td>` +
           `<td>${escapeHtml(String(t.sim_date ?? t.time ?? ""))}</td>` +
@@ -3280,7 +3289,8 @@
       }, 120000);
 
       _realtimeTimer = setInterval(async () => {
-        if (!_realtimeRunning) return;
+        if (!_realtimeRunning || _realtimeStepBusy) return;
+        _realtimeStepBusy = true;
         try {
           const r = await fetch("/api/paper/step", { method: "POST" });
           const d = await r.json();
@@ -3292,6 +3302,8 @@
           renderPaperPanel(d);
         } catch (e) {
           stopRealtimeSim();
+        } finally {
+          _realtimeStepBusy = false;
         }
       }, speed * 1000);
     }
@@ -3432,8 +3444,8 @@
                   return `<div class="news-headline-item" style="flex-direction:column;gap:0.15rem;">
                     <div style="display:flex;gap:0.5rem;align-items:baseline;">
                       ${heTitle
-                        ? `<span class="news-h-title" style="font-weight:600;">${h.link ? '<a href="'+h.link+'" target="_blank" rel="noopener">'+_esc(heTitle)+'</a>' : _esc(heTitle)}</span>`
-                        : `<span class="news-h-title">${h.link ? '<a href="'+h.link+'" target="_blank" rel="noopener">'+_esc(h.title)+'</a>' : _esc(h.title)}</span>`
+                        ? `<span class="news-h-title" style="font-weight:600;">${_safeHref(h.link) ? '<a href="'+_safeHref(h.link)+'" target="_blank" rel="noopener">'+_esc(heTitle)+'</a>' : _esc(heTitle)}</span>`
+                        : `<span class="news-h-title">${_safeHref(h.link) ? '<a href="'+_safeHref(h.link)+'" target="_blank" rel="noopener">'+_esc(h.title)+'</a>' : _esc(h.title)}</span>`
                       }
                       <span class="news-h-date">${date}</span>
                       <span class="news-h-source">${_esc(src)}</span>
@@ -3462,7 +3474,8 @@
         <tbody>${headlines.map(h => {
           const src = _extractSource(h.source || "");
           const date = h.pubDate ? _formatPubDate(h.pubDate) : "";
-          const link = h.link ? `<a href="${h.link}" target="_blank" rel="noopener" style="color:var(--text);text-decoration:none;">${_esc(h.title)}</a>` : _esc(h.title);
+          const _sl = _safeHref(h.link);
+          const link = _sl ? `<a href="${_sl}" target="_blank" rel="noopener" style="color:var(--text);text-decoration:none;">${_esc(h.title)}</a>` : _esc(h.title);
           return `<tr style="border-bottom:1px solid rgba(120,160,220,0.06);">
             <td style="padding:0.35rem 0.4rem;">${link}</td>
             <td style="padding:0.35rem 0.4rem;white-space:nowrap;color:var(--muted);font-size:0.76rem;">${date}</td>
@@ -3545,8 +3558,9 @@
       }
 
       if (a) {
-        if (h.link && String(h.link).trim()) {
-          a.href = h.link;
+        const _surl = _safeHref(h.link);
+        if (_surl) {
+          a.href = _surl;
           a.hidden = false;
         } else {
           a.href = "#";
@@ -3586,6 +3600,12 @@
       const div = document.createElement("div");
       div.textContent = s;
       return div.innerHTML;
+    }
+    function _safeHref(url) {
+      if (!url || typeof url !== "string") return "";
+      const u = url.trim();
+      if (/^https?:\/\//i.test(u)) return _esc(u);
+      return "";
     }
 
     /* ═══════ News headlines floating box (ברירת מחדל: מזער) ═══════ */
@@ -3692,8 +3712,10 @@
       const now = new Date();
       const ilTime = now.toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", second: "2-digit" });
       const nyTime = now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-      const nyHour = parseInt(now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false }));
-      const nyMin = now.getMinutes();
+      const _nyP = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(now);
+      const _pv = (pts, t) => parseInt((pts.find(p => p.type === t) || {}).value || "0");
+      const nyHour = _pv(_nyP, "hour");
+      const nyMin = _pv(_nyP, "minute");
       const nyDay = now.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" });
       const isWeekend = ["Sat", "Sun"].includes(nyDay);
       const marketOpen = !isWeekend && ((nyHour === 9 && nyMin >= 30) || (nyHour >= 10 && nyHour < 16));
@@ -3729,11 +3751,12 @@
           document.getElementById("btn-trading-disconnect").style.display = "";
 
           const s = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-          s("trd-acct-id", d.account_number || d.id || "—");
-          s("trd-equity", "$" + fmtUsd(d.equity));
-          s("trd-cash", "$" + fmtUsd(d.cash));
-          s("trd-bp", "$" + fmtUsd(d.buying_power));
-          s("trd-pnl", (d.pnl >= 0 ? "+" : "") + "$" + fmtUsd(d.pnl || 0));
+          s("trd-acct-id", d.account_number || d.id || (d.paper ? "Paper" : "Live") || "—");
+          s("trd-equity", "$" + fmtUsd(d.equity_usd || d.equity || 0));
+          s("trd-cash", "$" + fmtUsd(d.cash_usd || d.cash || 0));
+          s("trd-bp", "$" + fmtUsd(d.buying_power_usd || d.buying_power || 0));
+          const _pnlVal = d.pnl_usd != null ? d.pnl_usd : (d.pnl || 0);
+          s("trd-pnl", (_pnlVal >= 0 ? "+" : "") + "$" + fmtUsd(_pnlVal));
           s("trd-status", d.status || "active");
         } else {
           errEl.textContent = d.error || "שגיאת חיבור";

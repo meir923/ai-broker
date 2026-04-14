@@ -12,7 +12,11 @@ import json
 import logging
 import os
 import time
-import xml.etree.ElementTree as ET
+try:
+    from defusedxml.ElementTree import fromstring as _safe_xml_parse
+except ImportError:
+    import xml.etree.ElementTree as _ET
+    _safe_xml_parse = _ET.fromstring
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +83,8 @@ def _fetch_feed(url: str, timeout: float = 15.0) -> list[dict[str, str]]:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             r = client.get(url, headers={"User-Agent": "AIBroker/1.0"})
             r.raise_for_status()
-            root = ET.fromstring(r.text)
+            body = r.text[:500_000]
+            root = _safe_xml_parse(body)
 
         ns = ""
         if root.tag.startswith("{"):

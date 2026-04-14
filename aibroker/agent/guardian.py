@@ -85,21 +85,28 @@ class Guardian:
             return
 
         equity = float(acct.get("equity", 0))
+        last_equity = float(acct.get("last_equity", equity))
         deposit = session.initial_deposit
         if deposit <= 0:
             return
 
         limits = GUARDIAN_LIMITS.get(session.risk_level, GUARDIAN_LIMITS["medium"])
 
-        pnl_pct = (equity / deposit - 1) * 100
-        if pnl_pct < -limits["daily_loss_pct"]:
+        if last_equity > 0:
+            daily_change_pct = (equity / last_equity - 1) * 100
+        else:
+            daily_change_pct = (equity / deposit - 1) * 100
+
+        if daily_change_pct < -limits["daily_loss_pct"]:
             self._emergency_close(
                 session, base, headers,
-                f"הפסד יומי {pnl_pct:.1f}% חורג ממגבלת {limits['daily_loss_pct']}%",
+                f"הפסד יומי {daily_change_pct:.1f}% חורג ממגבלת {limits['daily_loss_pct']}%",
             )
             return
 
-        peak = session._equity_peak
+        if hasattr(session, '_equity_peak'):
+            session._equity_peak = max(session._equity_peak, equity)
+        peak = getattr(session, '_equity_peak', deposit)
         if peak > 0:
             drawdown_pct = (1 - equity / peak) * 100
             if drawdown_pct > limits["drawdown_pct"]:
@@ -129,8 +136,11 @@ class Guardian:
         alert_stop_loss(reason, eq, pnl)
 
         try:
-            httpx.delete(f"{base}/v2/positions", headers=headers, timeout=10)
-            log.info("All positions liquidated via API")
+            r = httpx.delete(f"{base}/v2/positions", headers=headers, timeout=10)
+            if r.status_code < 300:
+                log.info("All positions liquidated via API")
+            else:
+                log.error("Liquidation returned HTTP %d: %s", r.status_code, r.text[:300])
         except Exception as e:
             log.error("Failed to liquidate positions: %s", e)
 
@@ -143,8 +153,11 @@ class Guardian:
         log.warning("GUARDIAN: closing %s — %s", sym, reason)
 
         try:
-            httpx.delete(f"{base}/v2/positions/{sym}", headers=headers, timeout=10)
-            log.info("Position %s closed by guardian", sym)
+            r = httpx.delete(f"{base}/v2/positions/{sym}", headers=headers, timeout=10)
+            if r.status_code < 300:
+                log.info("Position %s closed by guardian", sym)
+            else:
+                log.error("Close %s returned HTTP %d: %s", sym, r.status_code, r.text[:300])
 
             from aibroker.agent.alerts import send_alert
             send_alert(f"Guardian סגר {sym}", reason)

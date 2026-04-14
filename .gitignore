@@ -30,5 +30,5 @@ desktop.ini
 # Logs
 *.log
 
-# Test files
-test_*.py
+# Standalone test scripts (not under tests/)
+/test_*.py
