@@ -10,7 +10,7 @@ import logging
 import math
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -113,7 +113,7 @@ def _download_yahoo_direct(symbol: str, bars: int) -> list[Bar] | None:
             v = volumes[i] if i < len(volumes) and volumes[i] is not None else 0
             if o is None or h is None or l is None or c is None:
                 continue
-            dt = datetime.utcfromtimestamp(ts)
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
             result.append(Bar(
                 date=dt.strftime("%Y-%m-%d"),
                 o=round(float(o), 4),

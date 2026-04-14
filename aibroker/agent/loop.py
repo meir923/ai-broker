@@ -90,6 +90,7 @@ class AgentSession:
         self._equity_trough: float = deposit
         self._trailing_stops: dict[str, float] = {}
         self._last_rebalance: int = -999
+        self._db_session_id: int = 0
 
     def _price_for(self, symbol: str) -> float:
         bars = self._history.get(symbol, [])
@@ -117,6 +118,11 @@ class AgentSession:
         self.positions = {}
         self.trades = []
         self.decisions = []
+        try:
+            from aibroker.data.storage import save_session_start
+            self._db_session_id = save_session_start(self.mode, self.risk_level, self.initial_deposit, self.symbols)
+        except Exception as e:
+            log.warning("Failed to save session start to DB: %s", e)
         self._equity_peak = self.initial_deposit
         self._equity_trough = self.initial_deposit
         self._trailing_stops = {}
@@ -145,6 +151,14 @@ class AgentSession:
                 return max(i, 20)
         return max(50, len(first_sym_bars) - 100)
 
+    def _save_state(self) -> None:
+        if self.mode in ("paper", "live"):
+            try:
+                from aibroker.agent.persistence import save_state
+                save_state(self)
+            except Exception as e:
+                log.warning("Failed to save state: %s", e)
+
     def tick(self) -> dict[str, Any]:
         if not self.running:
             return self.status()
@@ -152,7 +166,9 @@ class AgentSession:
         if self.mode == "sim":
             return self._tick_sim()
         elif self.mode in ("paper", "live"):
-            return self._tick_live()
+            result = self._tick_live()
+            self._save_state()
+            return result
         return self.status()
 
     def tick_fast(self) -> dict[str, Any]:
@@ -162,6 +178,7 @@ class AgentSession:
         max_len = min(len(b) for b in self._history.values()) if self._history else 0
         if self._bar_index >= max_len:
             self.running = False
+            self._persist_to_db()
             return self.status()
         first_bars = list(self._history.values())[0] if self._history else []
         sim_date = first_bars[self._bar_index].get("date", str(self._bar_index))
@@ -381,12 +398,12 @@ class AgentSession:
 
     def _tick_sim(self) -> dict[str, Any]:
         max_len = min(len(b) for b in self._history.values()) if self._history else 0
-        first_bars = list(self._history.values())[0] if self._history else []
+        ref_bars = self._history.get("SPY", list(self._history.values())[0] if self._history else [])
         if self._bar_index >= max_len:
             self.running = False
             return self.status()
 
-        sim_date = first_bars[self._bar_index].get("date", str(self._bar_index))
+        sim_date = ref_bars[self._bar_index].get("date", str(self._bar_index)) if self._bar_index < len(ref_bars) else str(self._bar_index)
 
         snapshot = build_snapshot(
             symbols=self.symbols,
@@ -556,20 +573,25 @@ class AgentSession:
         )
         snapshot["risk_level"] = self.risk_level
 
+        broker = AlpacaBrokerClient(paper=(self.mode == "paper"))
+        try:
+            broker.connect()
+            acct = broker.get_account()
+            if acct:
+                self.cash = acct.get("cash_usd", self.cash)
+            pos_list = broker.positions()
+            self.positions = {}
+            for p in pos_list:
+                sym = p["symbol"]
+                self.positions[sym] = {"qty": float(p["qty"]), "avg_cost": float(p["avg_cost"])}
+        except Exception as e:
+            log.warning("Pre-tick Alpaca sync failed: %s", e)
+
         try:
             decision = think(snapshot, allowed_symbols=self.symbols)
         except Exception as e:
             log.error("Agent think error: %s", e)
             self.error = str(e)
-            self.step += 1
-            return self.status()
-
-        broker = AlpacaBrokerClient(paper=(self.mode == "paper"))
-        try:
-            broker.connect()
-        except Exception as e:
-            log.error("Broker connect error: %s", e)
-            self.error = f"broker connection: {e}"
             self.step += 1
             return self.status()
 
@@ -623,7 +645,33 @@ class AgentSession:
 
     def stop(self) -> dict[str, Any]:
         self.running = False
+        self._persist_to_db()
+        try:
+            from aibroker.agent.persistence import mark_stopped
+            mark_stopped()
+        except Exception:
+            pass
         return self.status()
+
+    def _persist_to_db(self) -> None:
+        if not self._db_session_id:
+            return
+        try:
+            from aibroker.data.storage import save_session_end, save_trades, save_decisions
+            eq = self.equity()
+            pnl = eq - self.initial_deposit
+            pnl_pct = (pnl / self.initial_deposit * 100) if self.initial_deposit > 0 else 0
+            save_session_end(
+                self._db_session_id, eq, pnl, pnl_pct,
+                self.step, len(self.trades),
+                self._equity_peak - self.initial_deposit,
+                self._equity_trough - self.initial_deposit,
+            )
+            save_trades(self._db_session_id, self.trades)
+            save_decisions(self._db_session_id, self.decisions[-50:])
+            log.info("Session %d persisted to DB", self._db_session_id)
+        except Exception as e:
+            log.warning("Failed to persist session to DB: %s", e)
 
     def status(self) -> dict[str, Any]:
         first_bars = list(self._history.values())[0] if self._history else []

@@ -83,7 +83,7 @@ class PlanBKillSwitchBody(BaseModel):
 
 class AgentStartBody(BaseModel):
     mode: str = Field(default="sim", pattern="^(sim|paper|live)$")
-    symbols: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "AMD"])
+    symbols: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "AMD"], min_length=1)
     deposit: float = Field(default=100_000.0, ge=100.0, le=1_000_000_000.0)
     start_date: str | None = Field(default=None)
     risk_level: str = Field(default="medium", pattern="^(low|medium|high)$")
@@ -105,8 +105,12 @@ class ListLogHandler(logging.Handler):
 def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
     profile_path = profile_path.resolve()
 
+    _agent_session = None
+    _guardian = None
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        nonlocal _agent_session, _guardian
         configure_paper_autopilot(profile_path)
         start_paper_worker_thread()
         try:
@@ -115,6 +119,23 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
             ensure_bulk_loaded(list(cfg_init.risk.allowed_symbols or []))
         except Exception:
             pass
+
+        try:
+            from aibroker.agent.persistence import restore_session
+            restored = restore_session()
+            if restored:
+                _agent_session = restored
+                log.info("Agent session auto-resumed from previous run")
+        except Exception as e:
+            log.warning("Failed to restore agent session: %s", e)
+
+        from aibroker.agent.guardian import Guardian
+        _guardian = Guardian(
+            get_session=lambda: _agent_session,
+            stop_session=lambda: _agent_session.stop() if _agent_session else None,
+        )
+        _guardian.start()
+
         if open_browser:
 
             def _open() -> None:
@@ -122,6 +143,8 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
 
             threading.Timer(0.8, _open).start()
         yield
+        if _guardian:
+            _guardian.stop()
         stop_paper_worker_thread()
 
     app = FastAPI(title="AI Broker", lifespan=lifespan)
@@ -756,8 +779,6 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
     # AI Agent routes
     # ══════════════════════════════════════════════════
 
-    _agent_session = None
-
     @app.post("/api/agent/start")
     async def agent_start_api(body: AgentStartBody) -> JSONResponse:
         nonlocal _agent_session
@@ -774,6 +795,11 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
         )
         _agent_session = session
         out = await asyncio.to_thread(session.start)
+        try:
+            from aibroker.agent.alerts import alert_agent_started
+            alert_agent_started(body.mode, body.risk_level, len(body.symbols), body.deposit)
+        except Exception:
+            pass
         return JSONResponse({"ok": True, **out})
 
     @app.post("/api/agent/tick")
@@ -813,6 +839,11 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
         if session is None:
             return JSONResponse({"ok": True, "running": False})
         out = session.stop()
+        try:
+            from aibroker.agent.alerts import alert_agent_stopped
+            alert_agent_stopped(out.get("equity", 0), out.get("pnl", 0), out.get("pnl_pct", 0), "ידני")
+        except Exception:
+            pass
         return JSONResponse({"ok": True, **out})
 
     @app.get("/api/agent/trades")
@@ -828,5 +859,74 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
         if session is None:
             return JSONResponse({"ok": False, "decisions": []})
         return JSONResponse({"ok": True, "decisions": session.decisions[-20:]})
+
+    @app.get("/api/agent/live-prices")
+    async def agent_live_prices_api() -> JSONResponse:
+        """Fetch real-time prices from Alpaca and return updated portfolio."""
+        session = _agent_session
+        if session is None:
+            return JSONResponse({"ok": False})
+        if session.mode not in ("paper", "live"):
+            return JSONResponse({"ok": False, "reason": "sim_mode"})
+        try:
+            from aibroker.brokers.alpaca import AlpacaBrokerClient
+            broker = AlpacaBrokerClient(paper=(session.mode == "paper"))
+            broker.connect()
+            acct = broker.get_account()
+            positions = broker.positions()
+            broker.disconnect()
+
+            equity = float(acct.get("equity_usd", 0))
+            cash = float(acct.get("cash_usd", 0))
+            pnl = float(acct.get("pnl_usd", 0))
+            pnl_pct = (equity / session.initial_deposit - 1) * 100 if session.initial_deposit > 0 else 0
+
+            pos_detail = []
+            for p in positions:
+                qty = float(p.get("qty", 0))
+                avg = float(p.get("avg_cost", 0))
+                cur = float(p.get("current_price", 0))
+                side = "long" if qty > 0 else "short"
+                upl = float(p.get("unrealized_pl", 0))
+                upl_pct = ((cur / avg - 1) * 100 * (1 if qty > 0 else -1)) if avg > 0 else 0
+                pos_detail.append({
+                    "symbol": p["symbol"],
+                    "side": side,
+                    "qty": abs(qty),
+                    "avg_cost": round(avg, 2),
+                    "current_price": round(cur, 2),
+                    "market_value": round(abs(qty) * cur, 2),
+                    "unrealized_pnl": round(upl, 2),
+                    "unrealized_pnl_pct": round(upl_pct, 2),
+                })
+
+            return JSONResponse({
+                "ok": True,
+                "equity": round(equity, 2),
+                "cash": round(cash, 2),
+                "pnl": round(equity - session.initial_deposit, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "positions_detail": pos_detail,
+            })
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)})
+
+    @app.get("/api/agent/history")
+    async def agent_history_api() -> JSONResponse:
+        from aibroker.data.storage import get_session_history
+        try:
+            sessions = get_session_history(limit=30)
+            return JSONResponse({"ok": True, "sessions": sessions})
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e), "sessions": []})
+
+    @app.get("/api/agent/history/{session_id}/trades")
+    async def agent_history_trades_api(session_id: int) -> JSONResponse:
+        from aibroker.data.storage import get_session_trades
+        try:
+            trades = get_session_trades(session_id)
+            return JSONResponse({"ok": True, "trades": trades})
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e), "trades": []})
 
     return app

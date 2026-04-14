@@ -1799,6 +1799,46 @@
     }
     function _stopAgentClock() {
       if (_agentClockTimer) { clearInterval(_agentClockTimer); _agentClockTimer = null; }
+      _stopLivePricePoller();
+    }
+
+    let _livePriceTimer = null;
+    function _startLivePricePoller() {
+      _stopLivePricePoller();
+      const mode = document.getElementById("agent-mode")?.value;
+      if (mode !== "paper" && mode !== "live") return;
+      async function poll() {
+        try {
+          const r = await fetch("/api/agent/live-prices", {signal: AbortSignal.timeout(5000)});
+          const d = await r.json();
+          if (!d.ok) return;
+          _agKpi("agent-kpi-equity", "$" + Math.round(d.equity).toLocaleString());
+          const sign = d.pnl >= 0 ? "+" : "";
+          const pnlEl = document.getElementById("agent-kpi-pnl");
+          if (pnlEl) {
+            pnlEl.textContent = sign + "$" + Math.round(d.pnl).toLocaleString() + " (" + sign + d.pnl_pct.toFixed(1) + "%)";
+            pnlEl.style.color = d.pnl >= 0 ? "#4ade80" : "#fb7185";
+          }
+          _agKpi("agent-kpi-cash", "$" + Math.round(d.cash).toLocaleString());
+          if (d.positions_detail) {
+            _agentLastPositions = d.positions_detail;
+            _agentLastCash = d.cash;
+            _agentRenderPositions(d.positions_detail);
+          }
+          if (_agentLivePeakPnl === null) { _agentLivePeakPnl = d.pnl; _agentLiveTroughPnl = d.pnl; }
+          _agentLivePeakPnl = Math.max(_agentLivePeakPnl, d.pnl);
+          _agentLiveTroughPnl = Math.min(_agentLiveTroughPnl, d.pnl);
+          const pkEl = document.getElementById("agent-kpi-peak-pnl");
+          const trEl = document.getElementById("agent-kpi-trough-pnl");
+          if (pkEl) pkEl.textContent = _agentFmtSignedPnl(_agentLivePeakPnl);
+          if (trEl) trEl.textContent = _agentFmtSignedPnl(_agentLiveTroughPnl);
+        } catch(e) {}
+      }
+      poll();
+      _livePriceTimer = setInterval(poll, 1500);
+    }
+    function _stopLivePricePoller() {
+      if (_livePriceTimer) { clearInterval(_livePriceTimer); _livePriceTimer = null; }
     }
 
     function agentLog(html) {
@@ -1820,8 +1860,9 @@
       const existingMap = {};
       existing.forEach(el => { existingMap[el.getAttribute("data-pos-sym")] = el; });
       const newSyms = new Set(posArr.map(p => p.symbol));
-      existing.forEach(el => {
-        if (!newSyms.has(el.getAttribute("data-pos-sym"))) el.remove();
+      Array.from(container.children).forEach(el => {
+        if (!el.hasAttribute("data-pos-sym")) el.remove();
+        else if (!newSyms.has(el.getAttribute("data-pos-sym"))) el.remove();
       });
       for (const p of posArr) {
         const isLong = p.side === "long";
@@ -1886,6 +1927,14 @@
       const ml = modeLabels[d.mode] || d.mode || "\u2014";
       const rl = riskLabels[d.risk_level] || "";
       _agKpi("agent-kpi-mode", ml + (rl ? " | \u05E1\u05D9\u05DB\u05D5\u05DF " + rl : ""));
+      if (d.mode) {
+        const modeEl = document.getElementById("agent-mode");
+        if (modeEl && modeEl.value !== d.mode) { modeEl.value = d.mode; modeEl.dispatchEvent(new Event("change")); }
+      }
+      if (d.risk_level) {
+        const riskEl = document.getElementById("agent-risk-level");
+        if (riskEl && riskEl.value !== d.risk_level) riskEl.value = d.risk_level;
+      }
       _agKpi("agent-kpi-date", d.date || "\u2014");
       const stepRemaining = d.remaining != null ? d.remaining : (d.total_bars ? d.total_bars - (d.step||0) : 0);
       _agKpi("agent-kpi-step", (d.step != null ? d.step : "\u2014") + (d.total_bars ? " / " + (d.step + stepRemaining) : ""));
@@ -1928,9 +1977,12 @@
         if (rnEl) rnEl.textContent = dec.risk_note || "\u2014";
       }
 
-      if (d.error) {
+      if (d.error && !d.running) {
         const err = document.getElementById("planb-error");
         if (err) err.textContent = d.error;
+      } else if (!d.error) {
+        const err = document.getElementById("planb-error");
+        if (err) err.textContent = "";
       }
     }
 
@@ -2060,6 +2112,7 @@
       agentLog("\u05D4\u05E1\u05D5\u05DB\u05DF \u05D4\u05EA\u05D7\u05D9\u05DC \u05D1\u05DE\u05E6\u05D1 <strong>" + escapeHtml(modeLabel) + "</strong> \u05E2\u05DD " + inputs.symbols.length + " \u05E1\u05D9\u05DE\u05D1\u05D5\u05DC\u05D9\u05DD");
       if (inputs.mode !== "sim") {
         agentLog("<span style='color:#facc15;'>\u05DE\u05E6\u05D1 " + escapeHtml(modeLabel) + " \u2014 \u05D4\u05E1\u05D5\u05DB\u05DF \u05D9\u05E9\u05DC\u05D7 \u05E4\u05E7\u05D5\u05D3\u05D5\u05EA \u05D0\u05DE\u05D9\u05EA\u05D9\u05D5\u05EA \u05DC-Alpaca</span>");
+        _startLivePricePoller();
       }
       return d;
     }
@@ -2113,8 +2166,10 @@
 
     async function agentStart() {
       const err = document.getElementById("planb-error");
+      const btn = document.getElementById("agent-btn-start");
       try {
         agentSetButtons(true);
+        if (btn) { btn.textContent = "\u05DE\u05D7\u05D1\u05E8\u2026"; btn.disabled = true; }
         _agKpi("agent-kpi-status", "\u05DE\u05EA\u05D7\u05D9\u05DC\u2026");
         await agentStartSession();
         _agentRunning = true;
@@ -2122,6 +2177,8 @@
       } catch (e) {
         agentStopLoop();
         if (err) err.textContent = e.message || String(e);
+      } finally {
+        if (btn) { btn.textContent = "\u05D4\u05E4\u05E2\u05DC \u05E1\u05D5\u05DB\u05DF"; btn.disabled = false; }
       }
     }
 
@@ -2206,6 +2263,7 @@
 
     async function agentStop() {
       agentStopLoop();
+      _stopLivePricePoller();
       try { await fetch("/api/agent/stop", { method: "POST" }); } catch (_) {}
       agentLog("\u05D4\u05E1\u05D5\u05DB\u05DF \u05E0\u05E2\u05E6\u05E8.");
       _agKpi("agent-kpi-status", "\u05E0\u05E2\u05E6\u05E8");
@@ -2223,6 +2281,8 @@
           agentSetButtons(true);
           _agentRunning = true;
           if (!_agentFastForwarding) _agentStartTickLoop();
+          const curMode = document.getElementById("agent-mode")?.value;
+          if (curMode === "paper" || curMode === "live") _startLivePricePoller();
         } else {
           agentSetButtons(false);
         }

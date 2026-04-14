@@ -158,6 +158,13 @@ class AlpacaBrokerClient(BrokerClient):
             )
         return out
 
+    def _is_extended_hours(self) -> bool:
+        try:
+            clock = self._trading_client.get_clock()
+            return not clock.is_open
+        except Exception:
+            return False
+
     def place_order(self, intent: OrderIntent) -> OrderResult:
         if self._trading_client is None:
             return OrderResult(ok=False, message="Not connected to Alpaca")
@@ -165,15 +172,26 @@ class AlpacaBrokerClient(BrokerClient):
         from alpaca.trading.enums import OrderSide, TimeInForce
 
         side = OrderSide.BUY if intent.side == "buy" else OrderSide.SELL
-        tif_map = {
-            "DAY": TimeInForce.DAY,
-            "GTC": TimeInForce.GTC,
-            "IOC": TimeInForce.IOC,
-        }
-        tif = tif_map.get(intent.time_in_force.upper(), TimeInForce.DAY)
+        extended = self._is_extended_hours()
 
         try:
-            if intent.order_type == "limit" and intent.limit_price:
+            if extended:
+                price = self._get_current_price(intent.symbol)
+                if price <= 0:
+                    return OrderResult(ok=False, message=f"Cannot get price for {intent.symbol}")
+                slippage = 0.005
+                limit_px = round(price * (1 + slippage) if side == OrderSide.BUY else price * (1 - slippage), 2)
+                req = LimitOrderRequest(
+                    symbol=intent.symbol.upper(),
+                    qty=intent.quantity,
+                    side=side,
+                    time_in_force=TimeInForce.DAY,
+                    limit_price=limit_px,
+                    extended_hours=True,
+                )
+                log.info("Extended hours limit order: %s %s %s @ $%.2f", side, intent.quantity, intent.symbol, limit_px)
+            elif intent.order_type == "limit" and intent.limit_price:
+                tif = TimeInForce.DAY
                 req = LimitOrderRequest(
                     symbol=intent.symbol.upper(),
                     qty=intent.quantity,
@@ -182,6 +200,7 @@ class AlpacaBrokerClient(BrokerClient):
                     limit_price=intent.limit_price,
                 )
             else:
+                tif = TimeInForce.DAY
                 req = MarketOrderRequest(
                     symbol=intent.symbol.upper(),
                     qty=intent.quantity,
@@ -191,10 +210,29 @@ class AlpacaBrokerClient(BrokerClient):
             order = self._trading_client.submit_order(order_data=req)
             return OrderResult(
                 ok=True,
-                message=f"Submitted {intent.side} {intent.quantity} {intent.symbol}",
+                message=f"Submitted {intent.side} {intent.quantity} {intent.symbol}" + (" [extended]" if extended else ""),
                 broker_order_id=str(order.id),
                 raw={"status": str(order.status), "filled_avg_price": str(order.filled_avg_price or "")},
             )
         except Exception as exc:
             log.error("Alpaca order failed: %s", exc)
             return OrderResult(ok=False, message=str(exc))
+
+    def _get_current_price(self, symbol: str) -> float:
+        try:
+            from alpaca.data.requests import StockLatestQuoteRequest
+            from alpaca.data.historical import StockHistoricalDataClient
+            api_key, secret_key = _alpaca_keys()
+            client = StockHistoricalDataClient(api_key, secret_key)
+            req = StockLatestQuoteRequest(symbol_or_symbols=[symbol.upper()])
+            quotes = client.get_stock_latest_quote(req)
+            q = quotes.get(symbol.upper())
+            if q:
+                ask = float(q.ask_price) if q.ask_price else 0
+                bid = float(q.bid_price) if q.bid_price else 0
+                if ask > 0 and bid > 0:
+                    return (ask + bid) / 2
+                return ask or bid
+        except Exception as e:
+            log.warning("Failed to get price for %s: %s", symbol, e)
+        return 0.0

@@ -11,8 +11,11 @@ dist/
 build/
 *.egg
 
-# Data cache
+# Data cache & database
 data/cache/
+data/*.db
+data/*.db-wal
+data/*.db-shm
 
 # IDE
 .vscode/
