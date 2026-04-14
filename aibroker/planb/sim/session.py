@@ -156,8 +156,7 @@ def planb_sim_status() -> dict[str, Any]:
 
 
 def planb_sim_step(*, use_llm: bool = False) -> dict[str, Any]:
-    with _lock:
-        s = _session
+    s = _session
     if not s or not s.running:
         return {"ok": False, "error": "no_active_session"}
     if s.index >= len(s.bars) - 1:

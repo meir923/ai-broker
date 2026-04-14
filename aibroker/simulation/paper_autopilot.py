@@ -351,10 +351,11 @@ def _fill_pending_entries(cfg: AppConfig, session: PaperSession) -> None:
     cur_date = session.current_date
     mgr = _get_manager()
 
-    filled: list[tuple[Any, str, dict]] = []
+    remaining: list[tuple[Any, str, dict]] = []
     for intent, strat_name, extra in session.pending_entries:
         if session.filled_trades >= session.max_trades_cap():
-            break
+            remaining.append((intent, strat_name, extra))
+            continue
         sym = intent.symbol.upper()
         qty = float(intent.quantity)
         side = intent.side
@@ -403,7 +404,7 @@ def _fill_pending_entries(cfg: AppConfig, session: PaperSession) -> None:
 
         session.trades.append(row)
 
-    session.pending_entries.clear()
+    session.pending_entries = remaining
 
 
 def _step_once(cfg: AppConfig, session: PaperSession) -> None:

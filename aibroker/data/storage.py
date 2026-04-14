@@ -2,6 +2,7 @@ import json
 import logging
 import random
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ CACHE_DIR = DATA_DIR / "cache"
 DB_PATH = DATA_DIR / "aibroker.db"
 
 _conn: sqlite3.Connection | None = None
+_db_lock = threading.Lock()
 
 
 def _sqlite_retry_write(op: Callable[[], None], *, attempts: int = 8) -> None:
@@ -49,6 +51,7 @@ def _get_db() -> sqlite3.Connection:
     ensure_data_dirs()
     _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     _conn.execute("PRAGMA journal_mode=WAL")
+    _conn.execute("PRAGMA foreign_keys=ON")
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +79,7 @@ def _get_db() -> sqlite3.Connection:
             symbol TEXT NOT NULL,
             action TEXT NOT NULL,
             price REAL,
-            qty INTEGER,
+            qty REAL,
             reason TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(id)
         )
@@ -125,7 +128,8 @@ def save_session_start(mode: str, risk_level: str, deposit: float, symbols: list
         db.commit()
         out.append(cur.lastrowid or 0)
 
-    _sqlite_retry_write(op)
+    with _db_lock:
+        _sqlite_retry_write(op)
     return out[0] if out else 0
 
 
@@ -141,7 +145,8 @@ def save_session_end(session_id: int, equity: float, pnl: float, pnl_pct: float,
         )
         db.commit()
 
-    _sqlite_retry_write(op)
+    with _db_lock:
+        _sqlite_retry_write(op)
 
 
 def save_trades(session_id: int, trades: list[dict[str, Any]]) -> None:
@@ -156,7 +161,8 @@ def save_trades(session_id: int, trades: list[dict[str, Any]]) -> None:
             )
         db.commit()
 
-    _sqlite_retry_write(op)
+    with _db_lock:
+        _sqlite_retry_write(op)
 
 
 def save_decisions(session_id: int, decisions: list[dict[str, Any]]) -> None:
@@ -169,7 +175,8 @@ def save_decisions(session_id: int, decisions: list[dict[str, Any]]) -> None:
             )
         db.commit()
 
-    _sqlite_retry_write(op)
+    with _db_lock:
+        _sqlite_retry_write(op)
 
 
 def get_session_history(limit: int = 20) -> list[dict[str, Any]]:
@@ -212,7 +219,8 @@ def save_agent_state(session_id: int, mode: str, risk_level: str, deposit: float
         )
         db.commit()
 
-    _sqlite_retry_write(op)
+    with _db_lock:
+        _sqlite_retry_write(op)
 
 
 def load_agent_state() -> dict[str, Any] | None:
@@ -238,4 +246,5 @@ def clear_agent_state() -> None:
         db.execute("DELETE FROM agent_state")
         db.commit()
 
-    _sqlite_retry_write(op)
+    with _db_lock:
+        _sqlite_retry_write(op)

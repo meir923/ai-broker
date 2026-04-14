@@ -30,25 +30,32 @@ def run_once(cfg: AppConfig, *, connect_broker: bool = False) -> None:
         try:
             state.positions = broker.positions()
             state.open_orders = broker.open_orders()
-        finally:
+        except Exception:
             broker.disconnect()
+            broker = None
+            raise
     elif connect_broker and cfg.execution.dry_run:
         log.info("dry_run=true — skipping broker connect")
 
-    for intent in intents:
-        d = evaluate_intent(cfg, state, intent)
-        if not d.allowed:
-            log.warning("Risk blocked: %s — %s", intent.symbol, d.reason)
-            continue
-        if cfg.execution.dry_run:
-            log.info("[dry_run] would place %s %s %s", intent.side, intent.quantity, intent.symbol)
-        elif broker is None:
-            b = make_broker(cfg)
-            b.connect()
-            try:
-                res = b.place_order(intent)
+    try:
+        for intent in intents:
+            d = evaluate_intent(cfg, state, intent)
+            if not d.allowed:
+                log.warning("Risk blocked: %s — %s", intent.symbol, d.reason)
+                continue
+            if cfg.execution.dry_run:
+                log.info("[dry_run] would place %s %s %s", intent.side, intent.quantity, intent.symbol)
+            elif broker is not None:
+                res = broker.place_order(intent)
                 log.info("Order result: %s", res.message)
-            finally:
-                b.disconnect()
-        else:
-            log.warning("Broker path not fully wired for this scaffold")
+            else:
+                b = make_broker(cfg)
+                b.connect()
+                try:
+                    res = b.place_order(intent)
+                    log.info("Order result: %s", res.message)
+                finally:
+                    b.disconnect()
+    finally:
+        if broker is not None:
+            broker.disconnect()

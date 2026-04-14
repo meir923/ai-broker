@@ -1823,8 +1823,9 @@
           const sign = d.pnl >= 0 ? "+" : "";
           const pnlEl = document.getElementById("agent-kpi-pnl");
           if (pnlEl) {
-            pnlEl.textContent = sign + "$" + Math.round(d.pnl).toLocaleString() + " (" + sign + d.pnl_pct.toFixed(1) + "%)";
-            pnlEl.style.color = d.pnl >= 0 ? "#4ade80" : "#fb7185";
+            const _pnlV = Number(d.pnl) || 0, _pctV = Number(d.pnl_pct) || 0;
+            pnlEl.textContent = sign + "$" + Math.round(_pnlV).toLocaleString() + " (" + (_pctV >= 0 ? "+" : "") + _pctV.toFixed(1) + "%)";
+            pnlEl.style.color = _pnlV >= 0 ? "#4ade80" : "#fb7185";
           }
           _agKpi("agent-kpi-cash", "$" + Math.round(d.cash).toLocaleString());
           if (d.positions_detail) {
@@ -1888,8 +1889,8 @@
             <span style="font-size:0.7rem;font-weight:700;color:${sideColor};background:${sideColor}22;padding:1px 6px;border-radius:4px;">${sideLabel}</span>
           </div>
           <div style="font-size:0.78rem;color:#a0aec0;line-height:1.55;">
-            <div>${p.qty}x @ $${p.avg_cost.toFixed(2)}</div>
-            <div>\u05DE\u05D7\u05D9\u05E8: <b style="color:var(--text);">$${p.current_price.toFixed(2)}</b></div>
+            <div>${p.qty}x @ $${(Number(p.avg_cost)||0).toFixed(2)}</div>
+            <div>\u05DE\u05D7\u05D9\u05E8: <b style="color:var(--text);">$${(Number(p.current_price)||0).toFixed(2)}</b></div>
             <div>\u05E8\u05D5\u05D5\u05D7: <b style="color:${uplColor};">${uplSign}$${Math.round(upl).toLocaleString()} (${uplSign}${uplPct.toFixed(1)}%)</b></div>
             ${opened ? '<div style="color:#64748b;font-size:0.72rem;margin-top:0.15rem;">\u23F0 ' + opened + '</div>' : ''}
           </div>`;
@@ -2434,7 +2435,9 @@
 
     /* ── Render paper panel ── */
     function fmtUsd(v) {
-      return v != null ? Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
+      if (v == null) return "—";
+      const n = Number(v);
+      return Number.isFinite(n) ? n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
     }
 
     function renderPaperPanel(s) {
@@ -2634,7 +2637,7 @@
           <div class="tc-field"><span class="tc-label">סימבול</span><span class="tc-val blue">${escapeHtml(String(t.symbol || "—"))}</span></div>
           <div class="tc-field"><span class="tc-label">צד</span><span class="tc-val ${t.side === 'BUY' ? 'green' : 'red'}">${escapeHtml(String(t.side || "—"))}</span></div>
           <div class="tc-field"><span class="tc-label">סוג פוזיציה</span><span class="tc-val">${escapeHtml(pt)}</span></div>
-          <div class="tc-field"><span class="tc-label">כמות</span><span class="tc-val">${t.qty ?? "—"}</span></div>
+          <div class="tc-field"><span class="tc-label">כמות</span><span class="tc-val">${escapeHtml(String(t.qty ?? "—"))}</span></div>
           <div class="tc-field"><span class="tc-label">מחיר ביצוע</span><span class="tc-val">$${fmtUsd(t.ref_price_usd)}</span></div>
           <div class="tc-field"><span class="tc-label">שווי נוטיונל</span><span class="tc-val amber">$${fmtUsd(notional)}</span></div>
           <div class="tc-field"><span class="tc-label">סטופ לוס</span><span class="tc-val red">${t.stop ? "$" + fmtUsd(t.stop) : "—"}</span></div>
@@ -2751,7 +2754,6 @@
 
     /* ── Risk / Settings ── */
     function renderRisk(cfg, demo) {
-      const u = demo?.risk_usage || {};
       document.getElementById("risk-kpis").innerHTML = `
         <div class="kpi"><p class="kpi-label">מקס. הפסד יומי</p><div class="kpi-val">$${cfg.risk.max_daily_loss_usd}</div></div>
         <div class="kpi"><p class="kpi-label">מקס. נוטיונל לעסקה</p><div class="kpi-val">$${cfg.risk.max_notional_per_trade_usd}</div></div>
@@ -3409,10 +3411,12 @@
         else if (score < -0.3) tradingEffect = '<span style="color:var(--danger);">חוסם קנייה | מגביר מינוף ×1.3 בשורט</span>';
         else tradingEffect = '<span style="color:var(--muted);">ללא השפעה — סנטימנט בטווח ניטרלי</span>';
 
-        return `<div class="news-sym-card" data-sym="${sym}">
+        const _es = _esc(sym);
+        const _scoreF = Number.isFinite(score) ? score.toFixed(2) : "0.00";
+        return `<div class="news-sym-card" data-sym="${_es}">
           <div class="news-sym-header" onclick="this.parentElement.classList.toggle('open')">
-            <span class="news-sym-ticker">${sym}</span>
-            <span class="news-sym-score ${cls}">${icon} ${sentLabel} (${score >= 0 ? "+" : ""}${score.toFixed(2)})</span>
+            <span class="news-sym-ticker">${_es}</span>
+            <span class="news-sym-score ${cls}">${icon} ${sentLabel} (${score >= 0 ? "+" : ""}${_scoreF})</span>
             <span class="news-headline-count">${headlines.length} כותרות</span>
             <span class="news-chevron">▼</span>
           </div>
@@ -3500,8 +3504,8 @@
       try {
         const d = new Date(s);
         if (isNaN(d)) return s;
-        return d.toLocaleDateString("he-IL", { day:"numeric", month:"short" }) + " " +
-               d.toLocaleTimeString("he-IL", { hour:"2-digit", minute:"2-digit" });
+        return d.toLocaleDateString("he-IL", { timeZone:"Asia/Jerusalem", day:"numeric", month:"short" }) + " " +
+               d.toLocaleTimeString("he-IL", { timeZone:"Asia/Jerusalem", hour:"2-digit", minute:"2-digit" });
       } catch { return s; }
     }
 

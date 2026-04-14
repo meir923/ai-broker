@@ -41,7 +41,7 @@ If headlines are irrelevant to the symbol, return:
 
 
 def _cache_path(symbol: str, day: date) -> Path:
-    return CACHE_DIR / f"{symbol}_{day.isoformat()}.json"
+    return CACHE_DIR / f"{symbol.upper()}_{day.isoformat()}.json"
 
 
 def _read_cache(symbol: str, day: date) -> dict[str, Any] | None:

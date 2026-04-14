@@ -253,8 +253,9 @@ def _update_daily_returns(
 ) -> None:
     if not date:
         return
-    if date in daily_last:
-        prev = daily_last[date]
-        if prev > 0:
-            daily_returns.append(eq / prev - 1.0)
+    if date not in daily_last:
+        if daily_last:
+            prev_eq = next(reversed(daily_last.values()))
+            if prev_eq > 0:
+                daily_returns.append(eq / prev_eq - 1.0)
     daily_last[date] = eq
