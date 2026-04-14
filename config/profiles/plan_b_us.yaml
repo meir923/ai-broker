@@ -1,0 +1,42 @@
+# תוכנית ב׳ — קונפיגורציה נפרדת מתוכנית א׳ (סוחר US)
+# גבולות: אין ייבוא הדדי בין planb ל-runner של תוכנית א׳; Alpaca/נתונים יומיים הם תשתית משותפת בלבד.
+profile_name: plan_b_us
+market: US
+
+data:
+  default_bars: 400
+  intraday_enabled: false
+
+costs:
+  fee_per_share_usd: 0.005
+  fee_pct_of_notional: 0.0005
+  slippage_pct: 0.0005
+
+risk:
+  max_notional_per_trade_usd: 25000.0
+  max_trades_per_day: 50
+  max_daily_loss_usd: 5000.0
+  kill_switch: false
+  allowed_symbols:
+    - SPY
+    - QQQ
+    - AAPL
+    - NVDA
+    - MSFT
+
+oos:
+  mode: holdout_end
+  train_fraction: 0.7
+
+success_criteria:
+  # יעדים לתיעוד ובדיקות ידניות — לא חוקים אוטומטיים
+  min_sharpe_annualized: null
+  max_drawdown_pct: null
+  min_trades_for_significance: 30
+
+llm:
+  enabled: false
+  max_position_pct_equity: 0.25
+
+live:
+  enabled: false

@@ -1,0 +1,145 @@
+/**
+ * גיבוי / תיעוד — אותו תוכן כמו ב־%USERPROFILE%\.cursor\cursor-chat-rtl.css
+ *
+ * הפעלה: apc.imports → "${userHome}/.cursor/cursor-chat-rtl.css"
+ */
+
+/**
+ * עברית מימין לשמאל (RTL) בצ'אט — פחות קפיצות של נקודות/סוגריים ליד אנגלית.
+ *
+ * למה לא plaintext: unicode-bidi: plaintext מפצל שורות לפי תו חזק ראשון
+ * ולעיתים שובר סימני פיסוק במשפטים מעורבים. isolate + embed לקוד בשורה עובדים טוב יותר.
+ */
+
+/* מיכלים — RTL בלי plaintext על כל המיכל */
+.interactive-session,
+.interactive-session .interactive-item-container,
+.interactive-session .chat-editor-container,
+.interactive-session .interactive-item {
+  direction: rtl !important;
+  text-align: start !important;
+}
+
+/* גוף Markdown: הקשר RTL אחיד */
+.interactive-session .markdown-body,
+.interactive-item-container .value {
+  direction: rtl !important;
+  text-align: start !important;
+  unicode-bidi: isolate !important;
+}
+
+.interactive-session .markdown-body p,
+.interactive-session .markdown-body li,
+.interactive-session .markdown-body h1,
+.interactive-session .markdown-body h2,
+.interactive-session .markdown-body h3,
+.interactive-session .markdown-body h4,
+.interactive-session .markdown-body h5,
+.interactive-session .markdown-body h6,
+.interactive-session .markdown-body blockquote,
+.interactive-session .markdown-body td,
+.interactive-session .markdown-body th {
+  direction: rtl !important;
+  text-align: start !important;
+  unicode-bidi: isolate !important;
+}
+
+/* בלוק קוד — LTR מלא */
+.interactive-session pre {
+  direction: ltr !important;
+  text-align: start !important;
+  unicode-bidi: isolate !important;
+}
+
+/* קוד בשורה (ליד עברית) — LTR מוטבע בתוך משפט RTL */
+.interactive-session .markdown-body code {
+  direction: ltr !important;
+  unicode-bidi: embed !important;
+}
+
+.interactive-session .monaco-editor,
+.interactive-session .inputarea {
+  direction: ltr !important;
+  text-align: start !important;
+  unicode-bidi: isolate !important;
+}
+
+/* שדה הקלט של הצ'אט — כתיבה בעברית מימין */
+.interactive-session .interactive-input-part,
+.interactive-session .interactive-input-part .monaco-editor,
+.interactive-session .interactive-input-part .inputarea {
+  direction: rtl !important;
+  text-align: start !important;
+  unicode-bidi: isolate !important;
+}
+
+/* --- auxiliary / צד --- */
+.part.auxiliarybar .interactive-session,
+.part.auxiliarybar .markdown-body,
+.auxiliarybar .interactive-session,
+.auxiliarybar .markdown-body {
+  direction: rtl !important;
+  text-align: start !important;
+}
+
+.part.auxiliarybar .markdown-body,
+.auxiliarybar .markdown-body {
+  unicode-bidi: isolate !important;
+}
+
+.part.auxiliarybar .markdown-body p,
+.part.auxiliarybar .markdown-body li,
+.auxiliarybar .markdown-body p,
+.auxiliarybar .markdown-body li {
+  direction: rtl !important;
+  unicode-bidi: isolate !important;
+}
+
+.part.auxiliarybar pre,
+.auxiliarybar pre {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+.part.auxiliarybar .markdown-body code,
+.auxiliarybar .markdown-body code {
+  direction: ltr !important;
+  unicode-bidi: embed !important;
+}
+
+/* --- מיכלים כלליים --- */
+[class*="chat-view"] .markdown-body,
+[class*="ChatView"] .markdown-body,
+[class*="composer"] .markdown-body {
+  direction: rtl !important;
+  text-align: start !important;
+  unicode-bidi: isolate !important;
+}
+
+[class*="chat-view"] .markdown-body p,
+[class*="chat-view"] .markdown-body li,
+[class*="ChatView"] .markdown-body p,
+[class*="ChatView"] .markdown-body li {
+  direction: rtl !important;
+  unicode-bidi: isolate !important;
+}
+
+[class*="chat-view"] pre,
+[class*="ChatView"] pre,
+[class*="composer"] pre {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+[class*="chat-view"] .markdown-body code,
+[class*="ChatView"] .markdown-body code {
+  direction: ltr !important;
+  unicode-bidi: embed !important;
+}
+
+.monaco-workbench .part.panel .markdown-body,
+.monaco-workbench .part.sidebar .markdown-body {
+  direction: rtl !important;
+  text-align: start !important;
+  unicode-bidi: isolate !important;
+}

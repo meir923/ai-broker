@@ -1,0 +1,76 @@
+# Default first-run profile per plan: IBKR paper, dry_run friendly, Grok news-only, rules-only strategy.
+profile_name: paper_safe
+
+broker: ibkr
+account_mode: paper
+
+execution:
+  dry_run: true
+
+grok:
+  enabled: true
+  role: news_only
+  orders:
+    approval: manual
+  chat:
+    enabled: false
+    ui: cli
+    context:
+      - profile
+      - positions
+      - orders
+      - signals
+      - news_digest
+      - risk
+      - logs_tail
+
+strategy:
+  mode: rules
+
+signals:
+  colmex: "off"
+
+notifications:
+  channel: "none"
+
+risk:
+  max_daily_loss_usd: 1000000.0
+  max_notional_per_trade_usd: 500000.0
+  max_trades_per_day: 50000
+  kill_switch: false
+  allowed_symbols:
+    - SPY
+    - QQQ
+    - AAPL
+    - MSFT
+    - NVDA
+    - GOOGL
+    - AMZN
+    - META
+    - TSLA
+    - BRK.B
+    - JPM
+    - V
+    - JNJ
+    - UNH
+    - WMT
+    - PG
+    - MA
+    - HD
+    - DIS
+    - NFLX
+    - PYPL
+    - AMD
+    - INTC
+    - CRM
+    - COST
+    - PEP
+    - KO
+    - ABBV
+    - MRK
+    - BA
+
+ibkr:
+  host: 127.0.0.1
+  port: 7497
+  client_id: 1

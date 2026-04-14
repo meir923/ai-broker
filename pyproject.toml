@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aibroker"
+version = "0.1.0"
+description = "Modular US-market algo trading scaffold (IBKR-first, optional Grok layers)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "PyYAML>=6.0",
+    "httpx>=0.26",
+    "python-dotenv>=1.0",
+    "yfinance>=0.2.30",
+]
+
+[project.optional-dependencies]
+ibkr = ["ib-insync>=0.9.86"]
+alpaca = ["alpaca-py>=0.30"]
+web = ["fastapi>=0.109", "uvicorn[standard]>=0.27"]
+dev = ["pytest>=7.4", "ruff>=0.1"]
+e2e = ["playwright>=1.42"]
+
+[project.scripts]
+aibroker = "aibroker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aibroker*"]
+
+[tool.setuptools.package-data]
+aibroker = ["web/static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["e2e: requires Playwright and AIBROKER_E2E=1"]

@@ -1,0 +1,3758 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Broker — לוח בקרה</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Anek+Hebrew:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg0: #06080f;
+      --bg1: #0c1020;
+      --card: rgba(18, 24, 42, 0.92);
+      --line: rgba(120, 160, 220, 0.18);
+      --text: #e8edf7;
+      --muted: #9badc6;
+      --accent: #5eead4;
+      --accent2: #fbbf24;
+      --danger: #fb7185;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --radius: 14px;
+      --shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Anek Hebrew", system-ui, sans-serif;
+      background: var(--bg0);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.55;
+      background-image:
+        radial-gradient(ellipse 120% 80% at 100% 0%, rgba(94, 234, 212, 0.07), transparent 50%),
+        radial-gradient(ellipse 90% 60% at 0% 100%, rgba(251, 191, 36, 0.05), transparent 45%),
+        linear-gradient(180deg, var(--bg1) 0%, var(--bg0) 100%);
+    }
+
+    /* ── Header ── */
+    .top-header {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 0.75rem 1.5rem;
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(12px);
+    }
+    .brand {
+      font-family: "Fraunces", "Anek Hebrew", serif;
+      font-weight: 700;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-inline-end: 1rem;
+      white-space: nowrap;
+    }
+    .tab-nav {
+      display: flex;
+      gap: 0.35rem;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .tab-btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.92rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+    .tab-btn[aria-selected="true"] {
+      background: linear-gradient(105deg, rgba(94, 234, 212, 0.15), rgba(251, 191, 36, 0.08));
+      color: var(--text);
+      border-color: var(--line);
+    }
+    .tab-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .tab-btn.tab-btn-planb[aria-selected="true"] {
+      background: linear-gradient(105deg, rgba(167, 139, 250, 0.22), rgba(251, 191, 36, 0.12));
+      border-color: rgba(167, 139, 250, 0.45);
+      color: #f5f3ff;
+    }
+
+    /* ═══ תוכנית ב׳ — סוחר AI פשוט ═══ */
+    .planb-wrap {
+      --planb-accent: #c4b5fd;
+      --planb-line: rgba(167, 139, 250, 0.28);
+    }
+    .planb-wrap .controls-bar { border-color: var(--planb-line); }
+    .planb-wrap .kpi { border-color: var(--planb-line); }
+    .planb-log-box {
+      margin-top: 0.75rem;
+      max-height: 16rem;
+      overflow-y: auto;
+      font-size: 0.82rem;
+      direction: rtl;
+      text-align: right;
+      color: var(--text);
+      border: 1px solid var(--planb-line);
+      border-radius: var(--radius);
+      padding: 0.6rem 0.8rem;
+      background: rgba(15, 23, 42, 0.45);
+      line-height: 1.6;
+    }
+    .planb-log-box .log-buy  { color: #4ade80; }
+    .planb-log-box .log-sell { color: #fb7185; }
+    .planb-log-box .log-hold { color: var(--muted); }
+
+    /* ── Main ── */
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1.25rem 1.5rem 3rem;
+    }
+    section[role="tabpanel"] {
+      display: none;
+      animation: fade 0.3s ease;
+    }
+    section[role="tabpanel"].active { display: block; }
+    @keyframes fade {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    /* ── KPI grid (compact) ── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+      gap: 0.4rem;
+      margin-bottom: 0.75rem;
+    }
+    .kpi {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.45rem 0.6rem;
+    }
+    .kpi-label {
+      font-size: 0.6rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 0;
+    }
+    .kpi-val {
+      font-size: 0.88rem;
+      font-weight: 700;
+      margin-top: 0.1rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── News headlines box: corner dock, לא חוסם לחיצות על המסך הראשי ── */
+    .news-live-box {
+      position: fixed;
+      bottom: 0.65rem;
+      top: auto;
+      left: 0.5rem;
+      right: auto;
+      width: min(20rem, calc(100vw - 1rem));
+      max-height: min(28vh, 14rem);
+      background: rgba(12, 16, 32, 0.94);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      z-index: 25;
+      overflow: hidden;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+      display: flex;
+      flex-direction: column;
+      pointer-events: none;
+    }
+    .news-live-box .nlb-header,
+    .news-live-box .nlb-body,
+    .news-live-box .nlb-toggle {
+      pointer-events: auto;
+    }
+    .news-live-box .nlb-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.4rem 0.7rem;
+      background: linear-gradient(90deg, rgba(94,234,212,0.15), transparent);
+      border-bottom: 1px solid var(--line);
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .news-live-box .nlb-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.4rem 0;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(94,234,212,0.2) transparent;
+    }
+    .news-live-box .nlb-item {
+      padding: 0.35rem 0.7rem;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      border-bottom: 1px solid rgba(120,160,220,0.08);
+      animation: nlbSlideIn 0.3s ease;
+    }
+    .news-live-box .nlb-item:last-child { border-bottom: none; }
+    .news-live-box .nlb-sym { color: var(--accent); font-weight: 700; margin-left: 0.4rem; }
+    .news-live-box .nlb-score { font-size: 0.68rem; font-weight: 600; margin-left: 0.3rem; }
+    .news-live-box .nlb-score.pos { color: var(--ok); }
+    .news-live-box .nlb-score.neg { color: var(--danger); }
+    .news-live-box .nlb-score.neu { color: var(--muted); }
+    .news-live-box .nlb-title { color: var(--text); }
+    .news-live-box .nlb-time { color: var(--muted); font-size: 0.65rem; display: block; margin-top: 0.1rem; }
+    .nlb-toggle {
+      background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.85rem; padding: 0.1rem 0.3rem;
+    }
+    .nlb-toggle:hover { color: var(--text); }
+    @keyframes nlbSlideIn {
+      from { opacity: 0; transform: translateX(-10px); }
+      to { opacity: 1; transform: none; }
+    }
+    @media (max-width: 900px) {
+      .news-live-box { width: min(17rem, calc(100vw - 0.75rem)); max-height: 24vh; }
+    }
+    [dir="rtl"] .news-live-box {
+      left: auto;
+      right: 0.5rem;
+    }
+
+    /* ── מבזק: גלילה אופקית + dir=ltr (יציב ב-RTL), ללא אנימציית transform ── */
+    .news-ticker-strip {
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      margin-bottom: 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--card);
+      min-height: 2.65rem;
+      flex-shrink: 0;
+    }
+    .news-ticker-strip .news-ticker-badge {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 0.25rem 0.55rem;
+      background: linear-gradient(180deg, rgba(94,234,212,0.12), transparent);
+      border-inline-end: 1px solid rgba(120,160,220,0.12);
+      min-width: 4.25rem;
+      font-size: 0.62rem;
+      color: var(--muted);
+      line-height: 1.15;
+    }
+    .news-ticker-strip .news-ticker-label {
+      font-weight: 800;
+      color: var(--accent);
+      font-size: 0.72rem;
+      letter-spacing: 0.02em;
+    }
+    .news-ticker-strip .news-ticker-clock {
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      color: var(--text);
+      font-size: 0.75rem;
+    }
+    .news-ticker-strip .news-ticker-fetched {
+      font-size: 0.58rem;
+      color: var(--muted);
+      max-width: 4.6rem;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .news-ticker-marquee {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      gap: 0.35rem;
+    }
+    .news-ticker-scroll {
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(94,234,212,0.35) transparent;
+      -webkit-overflow-scrolling: touch;
+    }
+    .news-ticker-scroll:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .news-ticker-row {
+      display: inline-flex;
+      flex-direction: row;
+      align-items: center;
+      flex-wrap: nowrap;
+      gap: 0.45rem;
+      padding: 0.25rem 0.5rem;
+      min-height: 2.35rem;
+      font-size: 0.8rem;
+      color: var(--text);
+    }
+    .news-ticker-refresh {
+      flex: 0 0 auto;
+      align-self: center;
+      margin-inline-end: 0.35rem;
+      margin-inline-start: 0;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--bg1);
+      color: var(--accent);
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .news-ticker-refresh:hover {
+      border-color: var(--accent);
+      background: rgba(94,234,212,0.08);
+    }
+    .ticker-error {
+      color: var(--danger);
+      font-size: 0.82rem;
+      padding: 0.35rem 0.5rem;
+    }
+    .ticker-hint {
+      font-size: 0.65rem;
+      color: var(--muted);
+      padding: 0 0.5rem 0.2rem;
+      white-space: nowrap;
+    }
+    .ticker-item-news {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      max-width: min(22rem, 85vw);
+      background: rgba(94, 234, 212, 0.1);
+      border-radius: 8px;
+      padding: 0.2rem 0.5rem;
+      margin: 0;
+      font: inherit;
+      font-size: 0.78rem;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border: 1px solid rgba(94, 234, 212, 0.22);
+      text-align: start;
+    }
+    .ticker-item-news:hover {
+      background: rgba(94, 234, 212, 0.2);
+      border-color: rgba(94, 234, 212, 0.45);
+    }
+    .ticker-item-news:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .ticker-item-time {
+      flex-shrink: 0;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .ticker-item-sym {
+      flex-shrink: 0;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 0.72rem;
+    }
+    .ticker-item-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    /* הרצה מהירה: חדשות + שורת עסקאות */
+    .ff-ticker-combo {
+      flex-direction: column;
+      align-items: stretch;
+      height: auto;
+      gap: 0;
+      padding-bottom: 0.25rem;
+    }
+    .ff-ticker-row-main {
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      width: 100%;
+      min-height: 2.5rem;
+    }
+    .ff-ticker-trades {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      gap: 0.35rem;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 0.3rem 0.45rem 0.15rem;
+      border-top: 1px solid rgba(120,160,220,0.12);
+      font-size: 0.74rem;
+      scrollbar-width: thin;
+      max-width: 100%;
+    }
+    .ff-trade-chip {
+      flex: 0 0 auto;
+      padding: 0.15rem 0.45rem;
+      border-radius: 6px;
+      background: rgba(99,102,241,0.12);
+      border: 1px solid rgba(120,160,220,0.2);
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .ff-trade-chip.buy {
+      border-color: rgba(74,222,128,0.35);
+      background: rgba(74,222,128,0.1);
+    }
+    .ff-trade-chip.sell {
+      border-color: rgba(251,113,133,0.35);
+      background: rgba(251,113,133,0.08);
+    }
+
+    /* דיאלוג פירוט מבזק */
+    .ticker-detail-dlg {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0;
+      max-width: min(34rem, 94vw);
+      width: min(34rem, 94vw);
+      background: var(--bg1);
+      color: var(--text);
+      box-shadow: var(--shadow);
+    }
+    .ticker-detail-dlg::backdrop {
+      background: rgba(0, 0, 0, 0.55);
+      cursor: pointer;
+    }
+    .ticker-detail-dlg .ticker-dlg-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--card);
+    }
+    .ticker-detail-dlg .ticker-dlg-head h3 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+    .ticker-detail-dlg .ticker-dlg-close {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      border-radius: 8px;
+      padding: 0.35rem 0.75rem;
+      font: inherit;
+      cursor: pointer;
+    }
+    .ticker-detail-dlg .ticker-dlg-close:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .ticker-detail-dlg .ticker-dlg-body {
+      padding: 1rem 1.1rem;
+      max-height: min(60vh, 22rem);
+      overflow-y: auto;
+      font-size: 0.9rem;
+      line-height: 1.55;
+    }
+    .ticker-detail-dlg .ticker-dlg-row {
+      margin-bottom: 0.65rem;
+    }
+    .ticker-detail-dlg .ticker-dlg-label {
+      display: block;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 0.15rem;
+    }
+    .ticker-detail-dlg .ticker-dlg-actions {
+      padding: 0.75rem 1rem;
+      border-top: 1px solid var(--line);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+      background: var(--card);
+    }
+    .ticker-detail-dlg .ticker-dlg-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.45rem 0.9rem;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #042f2e;
+      font-weight: 700;
+      text-decoration: none;
+      font-size: 0.88rem;
+    }
+    .ticker-detail-dlg .ticker-dlg-link:hover {
+      filter: brightness(1.08);
+    }
+    .ticker-detail-dlg .ticker-dlg-link[hidden] {
+      display: none !important;
+    }
+
+    /* ── Controls ── */
+    .controls-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: flex-end;
+      margin-bottom: 1rem;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      font-size: 0.85rem;
+      color: var(--muted);
+      gap: 0.25rem;
+    }
+    .field input {
+      padding: 0.4rem 0.55rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--bg1);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.95rem;
+      min-width: 7rem;
+    }
+    .field input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #2dd4bf, #14b8a6);
+      color: #042f2e;
+      border: none;
+      padding: 0.55rem 1.1rem;
+      border-radius: 10px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: filter 0.15s;
+    }
+    .btn-primary:hover { filter: brightness(1.08); }
+    .btn-secondary {
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      border: 1px solid var(--line);
+      padding: 0.55rem 1.1rem;
+      border-radius: 10px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary:disabled, .btn-secondary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .btn-primary:focus-visible, .btn-secondary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* ── Positions strip ── */
+    .positions-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-bottom: 1rem;
+    }
+    .pos-chip {
+      font-size: 0.78rem;
+      padding: 0.25rem 0.55rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,0.25);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .pos-chip.long { border-color: rgba(74,222,128,0.4); color: #4ade80; }
+    .pos-chip.short { border-color: rgba(244,114,182,0.4); color: #f472b6; }
+
+    /* ── Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      max-height: 520px;
+      overflow-y: auto;
+      margin-bottom: 1rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      scrollbar-width: thin;
+      scrollbar-color: rgba(94,234,212,0.25) transparent;
+    }
+    .table-wrap::-webkit-scrollbar { width: 6px; }
+    .table-wrap::-webkit-scrollbar-track { background: transparent; }
+    .table-wrap::-webkit-scrollbar-thumb { background: rgba(94,234,212,0.25); border-radius: 3px; }
+    table.trades {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      background: var(--card);
+    }
+    table.trades th, table.trades td {
+      padding: 0.5rem 0.6rem;
+      border-bottom: 1px solid var(--line);
+      text-align: right;
+    }
+    table.trades th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      background: rgba(0,0,0,0.25);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    .trade-row { cursor: pointer; transition: background 0.12s; }
+    .trade-row:hover { background: rgba(94, 234, 212, 0.07); }
+    .trade-row:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .trade-row.active { background: rgba(94, 234, 212, 0.12); }
+    .side-buy { color: #4ade80; font-weight: 700; }
+    .side-sell { color: #fb923c; font-weight: 700; }
+    .pos-long { color: #4ade80; font-size: 0.75rem; font-weight: 700; }
+    .pos-short { color: #f472b6; font-size: 0.75rem; font-weight: 700; }
+    .pos-cover { color: #38bdf8; font-size: 0.75rem; font-weight: 700; }
+    .pos-close { color: #fbbf24; font-size: 0.75rem; font-weight: 700; }
+    .pos-pyramid { color: #a78bfa; font-size: 0.75rem; font-weight: 700; }
+    .exec-ok { color: #4ade80; }
+    .exec-block { color: #fb7185; }
+
+    /* ── Trade detail (inline expand) ── */
+    .trade-detail-row td {
+      padding: 0 !important;
+      border-bottom: 2px solid var(--accent);
+    }
+    .trade-card {
+      margin: 0;
+      padding: 0.9rem 1rem;
+      background: linear-gradient(135deg, rgba(18,24,42,0.98), rgba(12,16,32,0.98));
+      animation: cardSlide 0.2s ease;
+    }
+    @keyframes cardSlide {
+      from { opacity: 0; max-height: 0; }
+      to { opacity: 1; max-height: 500px; }
+    }
+    .trade-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+      gap: 0.6rem 1.2rem;
+    }
+    .tc-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+    }
+    .tc-label {
+      font-size: 0.68rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .tc-val {
+      font-size: 0.92rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .tc-val.green { color: #4ade80; }
+    .tc-val.red { color: #fb7185; }
+    .tc-val.blue { color: #38bdf8; }
+    .tc-val.amber { color: #fbbf24; }
+    .tc-val.purple { color: #a78bfa; }
+    .tc-section {
+      grid-column: 1 / -1;
+      font-size: 0.72rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+      margin-top: 0.4rem;
+      padding-top: 0.4rem;
+      border-top: 1px solid var(--line);
+    }
+    .tc-note {
+      grid-column: 1 / -1;
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    /* ── News panel ── */
+    .news-sym-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .news-sym-header {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 0.6rem;
+      cursor: pointer;
+    }
+    .news-sym-header:hover { opacity: 0.85; }
+    .news-sym-ticker {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .news-sym-score {
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 0.15rem 0.6rem;
+      border-radius: 20px;
+    }
+    .news-sym-score.positive { background: rgba(74,222,128,0.15); color: #4ade80; }
+    .news-sym-score.negative { background: rgba(251,113,133,0.15); color: #fb7185; }
+    .news-sym-score.neutral { background: rgba(155,173,198,0.12); color: var(--muted); }
+    .news-headline-count {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-right: auto;
+    }
+    .news-chevron {
+      font-size: 0.8rem;
+      color: var(--muted);
+      transition: transform 0.2s;
+    }
+    .news-sym-card.open .news-chevron { transform: rotate(180deg); }
+    .news-headlines-body {
+      display: none;
+      padding-top: 0.4rem;
+    }
+    .news-sym-card.open .news-headlines-body { display: block; }
+    .news-headline-item {
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid rgba(120,160,220,0.08);
+      font-size: 0.85rem;
+    }
+    .news-headline-item:last-child { border-bottom: none; }
+    .news-h-title { flex: 1; color: var(--text); }
+    .news-h-title a { color: var(--text); text-decoration: none; }
+    .news-h-title a:hover { color: var(--accent); text-decoration: underline; }
+    .news-h-date { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+    .news-h-source { color: var(--muted); font-size: 0.72rem; white-space: nowrap; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; }
+    .news-no-match { color: var(--muted); font-size: 0.82rem; padding: 0.5rem 0; }
+
+    /* ── Grok chat ── */
+    .grok-chat-container {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 14rem);
+      min-height: 400px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .grok-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+    .grok-msg {
+      max-width: 85%;
+      padding: 0.7rem 1rem;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .grok-msg.user {
+      align-self: flex-end;
+      background: linear-gradient(135deg, rgba(94,234,212,0.2), rgba(94,234,212,0.1));
+      border: 1px solid rgba(94,234,212,0.3);
+    }
+    .grok-msg.assistant {
+      align-self: flex-start;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+    }
+    .grok-msg.assistant .grok-label { color: var(--accent2); font-weight: 700; font-size: 0.75rem; margin-bottom: 0.3rem; }
+    .grok-msg.user .grok-label { color: var(--accent); font-weight: 700; font-size: 0.75rem; margin-bottom: 0.3rem; }
+    .grok-msg.error {
+      align-self: center;
+      background: rgba(251,113,133,0.1);
+      border: 1px solid rgba(251,113,133,0.3);
+      color: var(--danger);
+      font-size: 0.82rem;
+    }
+    .grok-input-bar {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      border-top: 1px solid var(--line);
+      background: var(--bg1);
+    }
+    .grok-input-bar input {
+      flex: 1;
+      padding: 0.6rem 0.8rem;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.9rem;
+    }
+    .grok-input-bar input:focus { outline: none; border-color: var(--accent); }
+    .grok-input-bar button {
+      padding: 0.6rem 1.2rem;
+      border-radius: 10px;
+      border: none;
+      background: linear-gradient(135deg, var(--accent), #2dd4bf);
+      color: #042f2e;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .grok-input-bar button:hover { opacity: 0.9; }
+    .grok-input-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Sub-tabs (backtest / realtime) ── */
+    .sub-nav {
+      border-bottom: 2px solid var(--line);
+      padding-bottom: 0;
+    }
+    .sub-tab {
+      padding: 0.55rem 1.2rem;
+      border: none;
+      border-bottom: 3px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .sub-tab:hover { color: var(--text); }
+    .sub-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* ── Embedded collapsible panels ── */
+    .embedded-panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .embedded-panel summary {
+      padding: 0.7rem 1rem;
+      font-weight: 700;
+      font-size: 0.95rem;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .embedded-panel summary::before {
+      content: "▶";
+      font-size: 0.7rem;
+      transition: transform 0.2s;
+      color: var(--accent);
+    }
+    .embedded-panel[open] summary::before { transform: rotate(90deg); }
+    .embedded-panel summary::-webkit-details-marker { display: none; }
+    .embedded-panel > :not(summary) { padding: 0 1rem 1rem; }
+
+    /* ── Real-time sim ── */
+    .btn-realtime {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      border: none;
+      padding: 0.4rem 0.8rem;
+      border-radius: 8px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.88rem;
+    }
+    .btn-realtime:hover { opacity: 0.9; }
+    .btn-realtime:disabled { opacity: 0.4; cursor: not-allowed; }
+    .realtime-status {
+      font-size: 0.8rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+    .realtime-status.live { background: rgba(74,222,128,0.15); color: #4ade80; animation: pulse-live 2s infinite; }
+    @keyframes pulse-live {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* ── Error banner ── */
+    .error-msg {
+      color: var(--danger);
+      font-size: 0.85rem;
+      min-height: 1.2em;
+      margin: 0.25rem 0 0.5rem;
+    }
+
+    /* ── Charts ── */
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+      gap: 1rem;
+      margin-top: 0.75rem;
+    }
+    .chart-box {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1rem;
+      min-height: 16rem;
+    }
+    .chart-box.tall { min-height: 20rem; }
+    .chart-box.wide { grid-column: span 2; }
+    .chart-box h4 { margin: 0 0 0.75rem; font-size: 0.88rem; color: var(--muted); font-weight: 600; }
+    .chart-box canvas { max-height: 280px; }
+    @media (max-width: 720px) {
+      .chart-box.wide { grid-column: span 1; }
+    }
+
+    /* ── Settings ── */
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1rem 1.15rem;
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow);
+    }
+    h2 { margin: 0 0 1rem; font-size: 1.35rem; font-weight: 700; font-family: "Fraunces", serif; }
+    h3 { font-size: 1rem; margin: 1rem 0 0.6rem; color: var(--accent); font-weight: 600; }
+    .symbols-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .sym-tag {
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 0.3rem 0.6rem;
+      border-radius: 8px;
+      background: rgba(94, 234, 212, 0.1);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+    .note {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin: 0.5rem 0;
+      padding: 0.55rem 0.8rem;
+      background: rgba(94, 234, 212, 0.06);
+      border-radius: 10px;
+      border: 1px solid var(--line);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .top-header { flex-wrap: wrap; gap: 0.5rem; padding: 0.65rem 1rem; }
+      main { padding: 1rem; }
+      .kpi-grid { grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr)); gap: 0.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="top-header">
+    <div class="brand">AI Broker</div>
+    <nav>
+      <ul class="tab-nav" role="tablist" aria-label="ניווט ראשי">
+        <li role="presentation"><button class="tab-btn" role="tab" id="tab-sim" aria-controls="sec-simulation" aria-selected="true">תוכנית א׳ — סימולציה</button></li>
+        <li role="presentation"><button class="tab-btn tab-btn-planb" role="tab" id="tab-planb" aria-controls="sec-planb" aria-selected="false">סוכן AI</button></li>
+        <li role="presentation"><button class="tab-btn" role="tab" id="tab-trading" aria-controls="sec-trading" aria-selected="false">מסחר</button></li>
+        <li role="presentation"><button class="tab-btn" role="tab" id="tab-settings" aria-controls="sec-settings" aria-selected="false">הגדרות</button></li>
+      </ul>
+    </nav>
+  </header>
+
+  <!-- ═══ כותרות (מזער כברירת מחדל — לא מפריע ללחיצות על המסך) ═══ -->
+  <div class="news-live-box" id="news-live-box" style="display:none;">
+    <div class="nlb-header">
+      <span style="display:flex;flex-direction:column;gap:0.05rem;">
+        <span>📰 מבזק</span>
+        <span id="nlb-refresh-time" style="font-size:0.62rem;font-weight:500;color:var(--muted);">—</span>
+      </span>
+      <span style="display:flex;gap:0.3rem;align-items:center;">
+        <span id="nlb-count" style="font-size:0.7rem;color:var(--muted);font-weight:400;">0</span>
+        <button type="button" class="nlb-toggle" id="nlb-minimize" title="הרחב / מזער">+</button>
+        <button type="button" class="nlb-toggle" id="nlb-close" title="סגור">✕</button>
+      </span>
+    </div>
+    <div class="nlb-body" id="nlb-body" style="display:none;"></div>
+  </div>
+
+  <main>
+    <!-- ═══════ Simulation Tab ═══════ -->
+    <section id="sec-simulation" role="tabpanel" aria-labelledby="tab-sim" class="active">
+
+      <!-- Sub-navigation: Backtest / Real-time -->
+      <div class="sub-nav" style="display:flex;gap:0.4rem;margin-bottom:1.2rem;">
+        <button class="sub-tab active" id="subtab-backtest" onclick="showSubMode('backtest')">📊 בדיקה לאחור</button>
+        <button class="sub-tab" id="subtab-realtime" onclick="showSubMode('realtime')">⚡ זמן אמת</button>
+      </div>
+
+      <!-- ────── Shared controls ────── -->
+      <div class="controls-bar">
+        <label class="field">
+          הפקדה ($)
+          <input type="number" id="paper-deposit" value="100000" min="100" step="1000" />
+        </label>
+        <label class="field">
+          תקרת מינוף (דינמי)
+          <select id="paper-leverage" style="padding:0.4rem 0.55rem;border-radius:8px;border:1px solid var(--line);background:var(--bg1);color:var(--text);font:inherit;font-size:0.95rem;min-width:5rem;">
+            <option value="2" selected>2x</option>
+            <option value="3">3x</option>
+            <option value="5">5x</option>
+            <option value="7">7x</option>
+            <option value="10">10x</option>
+          </select>
+        </label>
+        <label class="field bt-only">
+          תאריך התחלה
+          <input type="date" id="paper-start-date" style="min-width:8.5rem;" />
+          <script>(() => { const d = new Date(); d.setFullYear(d.getFullYear() - 1); document.getElementById("paper-start-date").value = d.toISOString().slice(0, 10); })()</script>
+        </label>
+        <!-- Backtest-only buttons -->
+        <span class="bt-only">
+          <button type="button" class="btn-primary" id="btn-paper-start">התחל בדיקה</button>
+          <button type="button" class="btn-primary" id="btn-paper-ff" style="background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#422006;" title="הרץ את כל הבקטסט עד הסוף מיד">⏩ הרצה מהירה</button>
+        </span>
+        <!-- Real-time-only buttons -->
+        <span class="rt-only" style="display:none;">
+          <label class="field">
+            מהירות (שניות/יום)
+            <input type="number" id="paper-interval" value="2" min="0.5" max="10" step="0.5" style="width:5rem;" />
+          </label>
+          <button type="button" class="btn-realtime" id="btn-paper-realtime">▶ הפעל</button>
+        </span>
+        <button type="button" class="btn-secondary" id="btn-paper-stop">עצור</button>
+        <span id="realtime-indicator" style="display:none;" class="realtime-status live">⚡ LIVE</span>
+      </div>
+
+      <!-- ────── KPIs (shared) ────── -->
+      <div class="kpi-grid" id="paper-kpis">
+        <div class="kpi"><p class="kpi-label">סטטוס</p><div class="kpi-val" id="kpi-status">לא פעיל</div></div>
+        <div class="kpi"><p class="kpi-label">יום סימולציה</p><div class="kpi-val" id="kpi-sim-date">—</div></div>
+        <div class="kpi"><p class="kpi-label">ימים</p><div class="kpi-val" id="kpi-days">—</div></div>
+        <div class="kpi"><p class="kpi-label">שווי חשבון</p><div class="kpi-val" id="kpi-equity">—</div></div>
+        <div class="kpi"><p class="kpi-label">רווח / הפסד</p><div class="kpi-val" id="kpi-pnl">—</div></div>
+        <div class="kpi"><p class="kpi-label">אחוז ניצחון</p><div class="kpi-val" id="kpi-winrate">—</div></div>
+        <div class="kpi"><p class="kpi-label">ממוצע R</p><div class="kpi-val" id="kpi-avg-r">—</div></div>
+        <div class="kpi"><p class="kpi-label">עסקאות סגורות</p><div class="kpi-val" id="kpi-closed">—</div></div>
+        <div class="kpi"><p class="kpi-label">ממוצע רווח</p><div class="kpi-val" id="kpi-avg-win" style="color:#4ade80">—</div></div>
+        <div class="kpi"><p class="kpi-label">ממוצע הפסד</p><div class="kpi-val" id="kpi-avg-loss" style="color:#fb7185">—</div></div>
+        <div class="kpi"><p class="kpi-label">מינוף מקסימלי</p><div class="kpi-val" id="kpi-leverage">—</div></div>
+        <div class="kpi"><p class="kpi-label">סנטימנט חדשות</p><div class="kpi-val" id="kpi-sentiment">—</div></div>
+        <div class="kpi"><p class="kpi-label">לונגים</p><div class="kpi-val" id="kpi-longs" style="color:#4ade80">—</div></div>
+        <div class="kpi"><p class="kpi-label">שורטים</p><div class="kpi-val" id="kpi-shorts" style="color:#f472b6">—</div></div>
+      </div>
+
+      <!-- In-sample / Out-of-sample split (visible only after backtest completes) -->
+      <div class="bt-only" id="oos-panel" style="display:none;margin-bottom:0.75rem;">
+        <div style="background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:0.6rem 0.9rem;font-size:0.82rem;">
+          <strong style="color:var(--muted);font-size:0.7rem;text-transform:uppercase;">In-Sample (75%) vs Out-of-Sample (25%)</strong>
+          <div style="display:flex;gap:2rem;margin-top:0.3rem;flex-wrap:wrap;">
+            <div>
+              <span style="color:var(--muted);">IS:</span>
+              <span id="oos-is-trades">—</span> עסקאות,
+              P/L <span id="oos-is-pnl">—</span>,
+              win <span id="oos-is-wr">—</span>,
+              avgR <span id="oos-is-r">—</span>
+            </div>
+            <div>
+              <span style="color:var(--muted);">OOS:</span>
+              <span id="oos-oos-trades">—</span> עסקאות,
+              P/L <span id="oos-oos-pnl">—</span>,
+              win <span id="oos-oos-wr">—</span>,
+              avgR <span id="oos-oos-r">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-time extra: market clock -->
+      <div class="rt-only" id="rt-market-bar" style="display:none;margin-bottom:1rem;">
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;padding:0.7rem 1rem;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);">
+          <div><span style="color:var(--muted);font-size:0.78rem;">שעון ישראל</span><br><span id="rt-clock-il" style="font-size:1.1rem;font-weight:700;font-variant-numeric:tabular-nums;">--:--:--</span></div>
+          <div><span style="color:var(--muted);font-size:0.78rem;">ניו יורק</span><br><span id="rt-clock-ny" style="font-size:1.1rem;font-weight:700;font-variant-numeric:tabular-nums;">--:--:--</span></div>
+          <div><span style="color:var(--muted);font-size:0.78rem;">סטטוס שוק</span><br><span id="rt-market-status" style="font-size:0.95rem;font-weight:600;">—</span></div>
+          <div><span style="color:var(--muted);font-size:0.78rem;">תאריך חי</span><br><span id="rt-live-date" style="font-size:0.95rem;font-weight:600;font-variant-numeric:tabular-nums;">—</span></div>
+          <div><span style="color:var(--muted);font-size:0.78rem;">צעד נוכחי</span><br><span id="rt-step-count" style="font-size:0.95rem;font-weight:700;color:var(--accent);">0</span></div>
+        </div>
+      </div>
+
+      <!-- מבזק: גלילה אופקית (LTR), רענון ידני, לחיצה לפרטים -->
+      <div class="rt-only news-ticker-strip" id="rt-news-ticker" style="display:none;">
+        <div class="news-ticker-badge" title="שעון ישראל · עדכון אחרון">
+          <span class="news-ticker-label">מבזק</span>
+          <span class="news-ticker-clock" id="rt-ticker-clock">--:--:--</span>
+          <span class="news-ticker-fetched" id="rt-ticker-fetched">—</span>
+        </div>
+        <div class="news-ticker-marquee" dir="ltr">
+          <div class="news-ticker-scroll" id="rt-ticker-scroll" tabindex="0" role="region" aria-label="מבזק חדשות — גלול לצד לעוד כותרות">
+            <div class="news-ticker-row" id="rt-ticker-track">
+              <span class="ticker-hint">טוען…</span>
+            </div>
+          </div>
+          <button type="button" class="news-ticker-refresh" id="rt-ticker-refresh-btn" title="רענן כותרות" aria-label="רענן מבזק">↻</button>
+        </div>
+      </div>
+
+      <!-- ── Fast-forward progress bar ── -->
+      <div id="ff-progress-wrap" style="display:none;margin-bottom:0.6rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
+          <span style="font-size:0.82rem;color:var(--muted);" id="ff-progress-label">הרצה מהירה...</span>
+          <span style="font-size:0.82rem;font-weight:700;color:var(--accent);" id="ff-progress-pct">0%</span>
+        </div>
+        <div style="height:6px;border-radius:3px;background:var(--bg1);overflow:hidden;border:1px solid var(--line);">
+          <div id="ff-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#fbbf24);border-radius:3px;transition:width 0.15s;"></div>
+        </div>
+      </div>
+
+      <!-- מבזק בהרצה מהירה: חדשות (כמו זמן אמת) + שורת עסקאות -->
+      <div class="news-ticker-strip ff-ticker-combo" id="ff-news-ticker" style="display:none;">
+        <div class="ff-ticker-row-main">
+          <div class="news-ticker-badge" title="חדשות ועסקאות אחרונות">
+            <span class="news-ticker-label" style="font-size:0.65rem;">מבזק</span>
+            <span class="news-ticker-clock" id="ff-ticker-day" style="font-size:0.62rem;">—</span>
+          </div>
+          <div class="news-ticker-marquee" dir="ltr">
+            <div class="news-ticker-scroll" id="ff-ticker-scroll" tabindex="0" role="region" aria-label="מבזק חדשות בהרצה מהירה">
+              <div class="news-ticker-row" id="ff-ticker-track-news">
+                <span class="ticker-hint">טוען חדשות…</span>
+              </div>
+            </div>
+            <button type="button" class="news-ticker-refresh" id="ff-ticker-refresh-btn" title="רענן חדשות" aria-label="רענן מבזק">↻</button>
+          </div>
+        </div>
+        <div class="ff-ticker-trades" id="ff-ticker-trades" dir="ltr" aria-label="עסקאות אחרונות בהרצה"></div>
+      </div>
+
+      <div class="positions-strip" id="paper-positions-strip" aria-label="פוזיציות פתוחות"></div>
+      <p class="error-msg" id="paper-error" aria-live="polite"></p>
+
+      <!-- ────── Trades table ────── -->
+      <div class="table-wrap">
+        <table class="trades" aria-label="עסקאות נייר">
+          <thead>
+            <tr>
+              <th>#</th><th>תאריך</th><th>סימבול</th><th>פוזיציה</th><th>צד</th><th>כמות</th><th>מחיר ($)</th><th>SL / TP</th><th>תוצאה</th>
+            </tr>
+          </thead>
+          <tbody id="paper-trades-body">
+            <tr><td colspan="9" class="empty-msg">בחר מצב והפעל את הסימולציה</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ════════ Embedded panels (collapsible) ════════ -->
+      <div style="display:flex;flex-direction:column;gap:0.6rem;margin-top:1rem;">
+
+        <!-- ── Charts panel ── -->
+        <details class="embedded-panel" open>
+          <summary>📈 גרפים</summary>
+          <!-- Live equity chart (grows during fast-forward) -->
+          <div id="ff-live-chart-wrap" style="display:none;margin-top:0.8rem;margin-bottom:0.5rem;">
+            <div class="chart-box tall wide" aria-label="עקום הון חי" style="border-color:var(--accent);">
+              <h4 style="color:var(--accent);">📊 עקום הון חי — הרצה מהירה</h4>
+              <canvas id="chart-equity-live"></canvas>
+            </div>
+          </div>
+          <div class="chart-grid" style="margin-top:0.8rem;">
+            <div class="chart-box tall wide" aria-label="עקום הון"><h4>עקום הון</h4><canvas id="chart-equity"></canvas></div>
+            <div class="chart-box" aria-label="חשיפה לפי סימבול"><h4>חשיפה לפי סימבול</h4><canvas id="chart-weights"></canvas></div>
+            <div class="chart-box tall" aria-label="מחיר סגירה"><h4>מחיר סגירה</h4><canvas id="chart-close"></canvas></div>
+            <div class="chart-box" aria-label="מגמה"><h4>מגמה</h4><canvas id="chart-spark"></canvas></div>
+          </div>
+          <p class="note" id="chart-disclaimer" style="margin-top:0.5rem;">טוען...</p>
+        </details>
+
+        <!-- ── News panel ── -->
+        <details class="embedded-panel">
+          <summary>📰 חדשות וסנטימנט</summary>
+          <div style="padding-top:0.8rem;">
+            <div style="display:flex;gap:1rem;align-items:center;margin-bottom:1rem;">
+              <button class="btn btn-accent" id="btn-load-news" onclick="loadNewsDetails()">טען חדשות</button>
+              <span id="news-status" style="color:var(--muted);font-size:0.85rem;">לחץ כדי לטעון כותרות RSS + ניתוח Grok בעברית</span>
+            </div>
+            <div id="news-summary" style="display:none;margin-bottom:1rem;">
+              <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+                <div class="kpi-card"><div class="kpi-label">כותרות</div><div class="kpi-val" id="news-total-count">—</div></div>
+                <div class="kpi-card"><div class="kpi-label">Grok</div><div class="kpi-val" id="news-grok-status">—</div></div>
+                <div class="kpi-card"><div class="kpi-label">סימבולים</div><div class="kpi-val" id="news-sym-count">—</div></div>
+              </div>
+            </div>
+            <div id="news-filter-bar" style="display:none;margin-bottom:1rem;">
+              <label style="font-size:0.85rem;color:var(--muted);">סנן:
+                <select id="news-sym-filter" onchange="filterNewsSymbol()" style="padding:0.3rem 0.5rem;border-radius:8px;border:1px solid var(--line);background:var(--bg1);color:var(--text);font:inherit;font-size:0.9rem;">
+                  <option value="__all__">הכל</option>
+                </select>
+              </label>
+            </div>
+            <div id="news-panels-container"></div>
+            <div id="news-all-headlines" style="display:none;margin-top:1rem;">
+              <h3 style="font-size:1rem;margin-bottom:0.5rem;">כל הכותרות (50 אחרונות)</h3>
+              <div id="news-all-list" class="table-wrap" style="max-height:350px;overflow-y:auto;"></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- ── Grok chat panel ── -->
+        <details class="embedded-panel">
+          <summary>🤖 Grok AI — צ'אט חי</summary>
+          <div style="padding-top:0.5rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+              <p class="note" style="font-size:0.78rem;margin:0;">שאל על מניות, ניתוח שוק, הפורטפוליו — Grok מכיר את מצב הסימולציה</p>
+              <button class="btn-secondary" style="font-size:0.75rem;padding:0.2rem 0.6rem;" onclick="clearGrokChat()">נקה</button>
+            </div>
+            <div class="grok-chat-container" style="height:400px;min-height:300px;">
+              <div class="grok-messages" id="grok-messages">
+                <div class="grok-msg assistant">
+                  <div class="grok-label">Grok AI</div>
+                  <div>שלום! אני Grok, יועץ AI פיננסי. שאל אותי כל שאלה.</div>
+                </div>
+              </div>
+              <div class="grok-input-bar">
+                <input type="text" id="grok-input" placeholder="שאל את Grok..." autocomplete="off" />
+                <button id="grok-send-btn" onclick="sendGrokMessage()">שלח</button>
+              </div>
+            </div>
+          </div>
+        </details>
+
+      </div>
+    </section>
+
+    <!-- ═══════ סוכן AI — המוח הוא LLM ═══════ -->
+    <section id="sec-planb" role="tabpanel" aria-labelledby="tab-planb" class="planb-wrap">
+
+      <div id="agent-clock" style="
+        display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;
+        font-family:'Segoe UI',system-ui,sans-serif;font-size:0.88rem;font-weight:500;
+        padding:0.6rem 1rem;margin-bottom:0.6rem;
+        background:linear-gradient(135deg,rgba(30,41,59,0.85),rgba(15,23,42,0.95));
+        border:1px solid rgba(100,116,139,0.25);border-radius:12px;
+        color:#94a3b8;letter-spacing:0.02em;
+        box-shadow:0 2px 8px rgba(0,0,0,0.2);
+      "></div>
+
+      <p id="planb-error" class="error-msg" aria-live="polite"></p>
+
+      <div class="controls-bar" style="flex-wrap:wrap;gap:0.6rem;">
+        <label class="field">
+          מצב
+          <select id="agent-mode" style="min-width:7rem;">
+            <option value="sim" selected>סימולציה</option>
+            <option value="paper">נייר (Alpaca)</option>
+            <option value="live">חי (Alpaca)</option>
+          </select>
+        </label>
+        <label class="field">
+          סיכון
+          <select id="agent-risk-level" style="min-width:7rem;">
+            <option value="low">נמוך</option>
+            <option value="medium" selected>בינוני</option>
+            <option value="high">מוגבר</option>
+          </select>
+        </label>
+        <label class="field">
+          סימבולים
+          <input type="text" id="agent-symbols" value="SPY,QQQ,AAPL,MSFT,TSLA,NVDA,GOOGL,AMZN,META,AMD" autocomplete="off" style="width:26rem;" />
+        </label>
+        <label class="field">
+          הפקדה ($)
+          <input type="number" id="agent-deposit" value="100000" min="100" step="1000" />
+        </label>
+        <label class="field" id="agent-date-wrap">
+          תאריך התחלה
+          <input type="date" id="agent-start-date" style="min-width:8.5rem;" />
+          <script>(() => { const d = new Date(); d.setFullYear(d.getFullYear() - 1); document.getElementById("agent-start-date").value = d.toISOString().slice(0, 10); })()</script>
+        </label>
+        <button type="button" class="btn-primary" id="agent-btn-start" onclick="agentStart()">הפעל סוכן</button>
+        <button type="button" class="btn-primary" id="agent-btn-ff" onclick="agentFastForward()" style="background:linear-gradient(135deg,#c4b5fd,#a78bfa);color:#1e1b4b;" title="הרץ הכול מהר">הרצה מהירה</button>
+        <button type="button" class="btn-secondary" id="agent-btn-stop" onclick="agentStop()">עצור</button>
+      </div>
+
+      <div class="kpi-grid" id="agent-kpis">
+        <div class="kpi"><p class="kpi-label">סטטוס</p><div class="kpi-val" id="agent-kpi-status">לא פעיל</div></div>
+        <div class="kpi"><p class="kpi-label">מצב</p><div class="kpi-val" id="agent-kpi-mode">סימולציה</div></div>
+        <div class="kpi"><p class="kpi-label">תאריך</p><div class="kpi-val" id="agent-kpi-date">—</div></div>
+        <div class="kpi"><p class="kpi-label">צעד</p><div class="kpi-val" id="agent-kpi-step">—</div></div>
+        <div class="kpi"><p class="kpi-label">שווי חשבון</p><div class="kpi-val" id="agent-kpi-equity">—</div></div>
+        <div class="kpi"><p class="kpi-label">רווח / הפסד</p><div class="kpi-val" id="agent-kpi-pnl">—</div></div>
+        <div class="kpi"><p class="kpi-label">מזומן</p><div class="kpi-val" id="agent-kpi-cash">—</div></div>
+        <div class="kpi"><p class="kpi-label">שיא רווח (כולל תנועה ביום)</p><div class="kpi-val" id="agent-kpi-peak-pnl" style="color:#4ade80;">—</div></div>
+        <div class="kpi"><p class="kpi-label">שפל רווח (כולל תנועה ביום)</p><div class="kpi-val" id="agent-kpi-trough-pnl" style="color:#fb7185;">—</div></div>
+      </div>
+
+      <div id="agent-positions-container" style="margin-top:0.7rem;min-height:120px;max-height:260px;overflow-y:auto;">
+        <h4 style="margin:0 0 0.5rem 0;color:var(--planb-accent);font-size:0.95rem;">פוזיציות פתוחות</h4>
+        <div id="agent-positions-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:0.5rem;min-height:80px;">
+          <div style="color:#8892a4;font-size:0.85rem;">אין פוזיציות פתוחות</div>
+        </div>
+      </div>
+
+      <div class="panel" id="agent-market-view-panel" style="margin-top:0.8rem;display:none;min-height:60px;">
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+          <div style="flex:1;min-width:14rem;">
+            <h4 style="margin:0 0 0.3rem 0;color:var(--planb-accent);">תמונת שוק</h4>
+            <p id="agent-market-view" style="margin:0;font-size:0.88rem;color:var(--text);direction:rtl;line-height:1.6;">—</p>
+          </div>
+          <div style="flex:1;min-width:14rem;">
+            <h4 style="margin:0 0 0.3rem 0;color:#fb7185;">הערת סיכון</h4>
+            <p id="agent-risk-note" style="margin:0;font-size:0.88rem;color:var(--text);direction:rtl;line-height:1.6;">—</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:0.8rem;max-height:300px;overflow-y:auto;">
+        <table class="trades" aria-label="עסקאות הסוכן">
+          <thead style="position:sticky;top:0;z-index:1;">
+            <tr><th>#</th><th>תאריך</th><th>סימבול</th><th>פעולה</th><th>מחיר ($)</th><th>כמות</th><th>סיבה (הסוכן)</th></tr>
+          </thead>
+          <tbody id="agent-trades-body">
+            <tr><td colspan="7" class="empty-msg">הסוכן עוד לא התחיל. לחץ על הפעל סוכן.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details class="embedded-panel" open style="margin-top:0.8rem;">
+        <summary>יומן הסוכן</summary>
+        <div class="planb-log-box" id="agent-log"></div>
+      </details>
+
+    </section>
+
+    <!-- ═══════ Trading Tab (Live / Broker) ═══════ -->
+    <section id="sec-trading" role="tabpanel" aria-labelledby="tab-trading">
+      <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
+        <h2 style="margin:0;">מסחר חי</h2>
+        <span id="trading-conn-status" style="font-size:0.82rem;padding:0.2rem 0.7rem;border-radius:20px;font-weight:600;background:rgba(251,113,133,0.15);color:var(--danger);">● לא מחובר</span>
+      </div>
+
+      <!-- Broker connection -->
+      <div class="panel" style="margin-bottom:1rem;">
+        <h3 style="margin-top:0;">חיבור ברוקר</h3>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-end;">
+          <label class="field">
+            API Key
+            <input type="password" id="trading-api-key" placeholder="ALPACA_API_KEY" style="min-width:14rem;" />
+          </label>
+          <label class="field">
+            Secret Key
+            <input type="password" id="trading-secret-key" placeholder="ALPACA_SECRET_KEY" style="min-width:14rem;" />
+          </label>
+          <label class="field">
+            מצב
+            <select id="trading-mode" style="padding:0.4rem 0.55rem;border-radius:8px;border:1px solid var(--line);background:var(--bg1);color:var(--text);font:inherit;font-size:0.95rem;">
+              <option value="paper" selected>נייר (Paper)</option>
+              <option value="live">אמיתי (Live)</option>
+            </select>
+          </label>
+          <button class="btn-primary" id="btn-trading-connect" onclick="connectBroker()">התחבר</button>
+          <button class="btn-secondary" id="btn-trading-disconnect" onclick="disconnectBroker()" style="display:none;">נתק</button>
+        </div>
+        <p id="trading-broker-error" class="error-msg"></p>
+        <div id="trading-account-info" style="display:none;margin-top:0.8rem;">
+          <div class="kpi-grid">
+            <div class="kpi"><p class="kpi-label">חשבון</p><div class="kpi-val" id="trd-acct-id">—</div></div>
+            <div class="kpi"><p class="kpi-label">הון</p><div class="kpi-val" id="trd-equity">—</div></div>
+            <div class="kpi"><p class="kpi-label">מזומן</p><div class="kpi-val" id="trd-cash">—</div></div>
+            <div class="kpi"><p class="kpi-label">כוח קנייה</p><div class="kpi-val" id="trd-bp">—</div></div>
+            <div class="kpi"><p class="kpi-label">P&L יומי</p><div class="kpi-val" id="trd-pnl">—</div></div>
+            <div class="kpi"><p class="kpi-label">סטטוס</p><div class="kpi-val" id="trd-status">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live controls -->
+      <div class="panel">
+        <h3 style="margin-top:0;">הפעלת מסחר</h3>
+        <div class="controls-bar">
+          <label class="field">
+            הפקדה ($)
+            <input type="number" id="trading-deposit" value="100000" min="100" step="1000" />
+          </label>
+          <label class="field">
+            תקרת מינוף
+            <select id="trading-leverage" style="padding:0.4rem 0.55rem;border-radius:8px;border:1px solid var(--line);background:var(--bg1);color:var(--text);font:inherit;font-size:0.95rem;">
+              <option value="2" selected>2x</option>
+              <option value="3">3x</option>
+              <option value="5">5x</option>
+            </select>
+          </label>
+          <label class="field">
+            מרווח (שניות)
+            <input type="number" id="trading-interval" value="5" min="1" max="60" step="1" style="width:5rem;" />
+          </label>
+          <button class="btn-realtime" id="btn-trading-start" onclick="startLiveTrading()" disabled>▶ התחל מסחר</button>
+          <button class="btn-secondary" id="btn-trading-stop" onclick="stopLiveTrading()" style="display:none;">⏸ עצור</button>
+          <span id="trading-live-indicator" style="display:none;" class="realtime-status live">⚡ LIVE TRADING</span>
+        </div>
+        <div class="note" style="margin-top:0.5rem;color:var(--warn);">
+          ⚠️ מסחר אמיתי משתמש בכסף אמיתי. ודא שאתה מבין את הסיכונים.<br>
+          מומלץ: התחל עם חשבון נייר (Paper) של Alpaca לפני מעבר לחשבון אמיתי.
+        </div>
+      </div>
+
+      <!-- Live KPIs -->
+      <div class="kpi-grid" id="trading-kpis" style="margin-top:0.75rem;">
+        <div class="kpi"><p class="kpi-label">סטטוס</p><div class="kpi-val" id="trd-kpi-status">ממתין</div></div>
+        <div class="kpi"><p class="kpi-label">תאריך</p><div class="kpi-val" id="trd-kpi-date">—</div></div>
+        <div class="kpi"><p class="kpi-label">שווי</p><div class="kpi-val" id="trd-kpi-equity">—</div></div>
+        <div class="kpi"><p class="kpi-label">P&L</p><div class="kpi-val" id="trd-kpi-pnl">—</div></div>
+        <div class="kpi"><p class="kpi-label">פוזיציות</p><div class="kpi-val" id="trd-kpi-positions">0</div></div>
+        <div class="kpi"><p class="kpi-label">עסקאות</p><div class="kpi-val" id="trd-kpi-trades">0</div></div>
+      </div>
+
+      <!-- Live positions -->
+      <div class="positions-strip" id="trading-positions-strip"></div>
+
+      <!-- Market clock for trading -->
+      <div id="trd-market-bar" style="margin-top:0.75rem;margin-bottom:1rem;">
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;padding:0.7rem 1rem;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);">
+          <div><span style="color:var(--muted);font-size:0.78rem;">שעון ישראל</span><br><span id="trd-clock-il" style="font-size:1.1rem;font-weight:700;font-variant-numeric:tabular-nums;">--:--:--</span></div>
+          <div><span style="color:var(--muted);font-size:0.78rem;">ניו יורק</span><br><span id="trd-clock-ny" style="font-size:1.1rem;font-weight:700;font-variant-numeric:tabular-nums;">--:--:--</span></div>
+          <div><span style="color:var(--muted);font-size:0.78rem;">סטטוס שוק</span><br><span id="trd-market-status" style="font-size:0.95rem;font-weight:600;">—</span></div>
+        </div>
+      </div>
+
+      <!-- Grok for trading -->
+      <details class="embedded-panel">
+        <summary>🤖 Grok AI — יועץ מסחר</summary>
+        <div style="padding-top:0.5rem;">
+          <p class="note" style="font-size:0.78rem;margin:0 0 0.5rem;">שאל את Grok על אסטרטגיה, ניתוח שוק, או החלטות מסחר בזמן אמת</p>
+          <div class="grok-chat-container" style="height:300px;min-height:250px;">
+            <div class="grok-messages" id="trd-grok-messages">
+              <div class="grok-msg assistant"><div class="grok-label">Grok AI</div><div>מוכן לייעץ על מסחר חי. שאל אותי.</div></div>
+            </div>
+            <div class="grok-input-bar">
+              <input type="text" id="trd-grok-input" placeholder="שאל את Grok..." autocomplete="off" />
+              <button id="trd-grok-send" onclick="sendTradingGrok()">שלח</button>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- ═══════ Settings Tab ═══════ -->
+    <section id="sec-settings" role="tabpanel" aria-labelledby="tab-settings">
+      <h2>הגדרות וריסק</h2>
+
+      <div class="kpi-grid" id="risk-kpis"></div>
+
+      <div class="panel">
+        <h3>סימבולים מותרים</h3>
+        <div class="symbols-grid" id="symbols-grid"></div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="chart-box tall" aria-label="שימוש מול תקרות">
+          <h4>שימוש מול תקרות</h4>
+          <canvas id="chart-risk"></canvas>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="ticker-detail-dlg" class="ticker-detail-dlg" aria-labelledby="ticker-dlg-title">
+    <div class="ticker-dlg-head">
+      <h3 id="ticker-dlg-title">פרטי כותרת</h3>
+      <button type="button" class="ticker-dlg-close" id="ticker-dlg-close-btn">סגור</button>
+    </div>
+    <div class="ticker-dlg-body">
+      <div class="ticker-dlg-row">
+        <span class="ticker-dlg-label">תאריך ושעה (פרסום)</span>
+        <div id="ticker-dlg-when">—</div>
+      </div>
+      <div class="ticker-dlg-row">
+        <span class="ticker-dlg-label">סימבול (אם רלוונטי)</span>
+        <div id="ticker-dlg-sym">—</div>
+      </div>
+      <div class="ticker-dlg-row">
+        <span class="ticker-dlg-label">כותרת בעברית (Grok)</span>
+        <div id="ticker-dlg-title-he">—</div>
+      </div>
+      <div class="ticker-dlg-row">
+        <span class="ticker-dlg-label">כותרת מקור (RSS)</span>
+        <div id="ticker-dlg-title-src" style="word-break:break-word;">—</div>
+      </div>
+      <div class="ticker-dlg-row">
+        <span class="ticker-dlg-label">מקור / אתר</span>
+        <div id="ticker-dlg-source" style="word-break:break-all;color:var(--muted);font-size:0.82rem;">—</div>
+      </div>
+      <div class="ticker-dlg-row" id="ticker-dlg-grok-wrap" style="display:none;">
+        <span class="ticker-dlg-label">סיכום Grok לסימבול (הקשר כללי)</span>
+        <div id="ticker-dlg-summary-he" style="color:var(--muted);font-size:0.86rem;">—</div>
+      </div>
+      <div class="ticker-dlg-row" id="ticker-dlg-reason-wrap" style="display:none;">
+        <span class="ticker-dlg-label">נימוק Grok</span>
+        <div id="ticker-dlg-reason-he" style="color:var(--muted);font-size:0.86rem;">—</div>
+      </div>
+    </div>
+    <div class="ticker-dlg-actions">
+      <a class="ticker-dlg-link" id="ticker-dlg-link" href="#" target="_blank" rel="noopener noreferrer">פתיחה במקור ↗</a>
+    </div>
+  </dialog>
+
+  <script>
+    if (location.protocol === "file:") {
+      document.body.innerHTML =
+        "<div style='font-family:system-ui;background:#0a0c12;color:#e8edf7;padding:2rem;max-width:40rem;margin:2rem auto;line-height:1.6'>" +
+        "<h1>יש להפעיל דרך השרת</h1>" +
+        "<p>פתח טרמינל בתיקיית הפרויקט והרץ <code>run_web.bat</code> או <code>python -m aibroker web</code>.</p></div>";
+      throw new Error("file protocol");
+    }
+
+    Chart.defaults.font.family = "'Anek Hebrew', sans-serif";
+    Chart.defaults.color = "#9badc6";
+    Chart.defaults.borderColor = "rgba(120,160,220,0.2)";
+
+    const charts = {};
+    let _dashboardCfg = null;
+    let _demoCharts = null;
+    let _paperLastTrades = [];
+    let _paperPollTimer = null;
+    let _realtimeTimer = null;
+    let _realtimeRunning = false;
+    function destroyChart(id) {
+      if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function formatApiError(d, r) {
+      if (d && typeof d.detail === "string") return d.detail;
+      if (d && Array.isArray(d.detail))
+        return d.detail.map(x => (x.msg || x.type || JSON.stringify(x))).join(" · ");
+      return r.statusText || String(r.status);
+    }
+
+    async function jget(url) {
+      const r = await fetch(url);
+      let d = {};
+      try { d = await r.json(); } catch (_) {
+        if (!r.ok) throw new Error(r.statusText || String(r.status));
+        return {};
+      }
+      if (!r.ok) throw new Error(formatApiError(d, r));
+      return d;
+    }
+
+    /* ── Tab switching ── */
+    function showTab(id) {
+      document.querySelectorAll("section[role='tabpanel']").forEach(s => s.classList.toggle("active", s.id === id));
+      document.querySelectorAll(".tab-btn").forEach(b => {
+        const selected = b.getAttribute("aria-controls") === id;
+        b.setAttribute("aria-selected", String(selected));
+      });
+
+      if (id === "sec-simulation") {
+        history.replaceState(null, "", "#simulation");
+        if (!_realtimeRunning) startPaperPoll();
+      } else if (id === "sec-planb") {
+        history.replaceState(null, "", "#planb");
+        stopPaperPoll();
+        planbOnTabEnter();
+      } else if (id === "sec-trading") {
+        history.replaceState(null, "", "#trading");
+        stopPaperPoll();
+      } else {
+        if (!_realtimeRunning) stopPaperPoll();
+        if (["#simulation", "#planb", "#trading"].includes(location.hash))
+          history.replaceState(null, "", location.pathname);
+      }
+    }
+
+    /* ── AI Agent ── */
+
+    let _agentTimer = null;
+    let _agentClockTimer = null;
+    let _agentRunning = false;
+    let _agentBusy = false;
+    let _agentFastForwarding = false;
+    let _agentDeposit = 100000;
+    let _agentTradeCount = 0;
+
+    let _agentSimDate = "";
+    let _agentSimStep = 0;
+    let _agentSimTotal = 0;
+    let _agentThinking = false;
+    let _agentThinkDots = 0;
+    let _agentSimTimeMin = 570;
+    let _agentThinkStart = 0;
+    let _agentLastPositions = [];
+    let _agentLastCash = 0;
+    let _agentLivePeakPnl = null;
+    let _agentLiveTroughPnl = null;
+
+    function _agentFmtSignedPnl(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return "\u2014";
+      const sign = n >= 0 ? "+" : "";
+      return sign + "$" + Math.round(n).toLocaleString() + " (" + sign + (n / _agentDeposit * 100).toFixed(1) + "%)";
+    }
+
+    function _simIntradayPrice(p, t) {
+      if (!p.o || !p.h || !p.l || !p.c) return p.current_price;
+      const frac = Math.max(0, Math.min(1, (t - 570) / 390));
+      if (frac <= 0.33) {
+        const f2 = frac / 0.33;
+        return p.o + (p.h - p.o) * f2;
+      } else if (frac <= 0.66) {
+        const f2 = (frac - 0.33) / 0.33;
+        return p.h + (p.l - p.h) * f2;
+      } else {
+        const f2 = (frac - 0.66) / 0.34;
+        return p.l + (p.c - p.l) * f2;
+      }
+    }
+
+    function _agentAnimatePositions() {
+      if (!_agentLastPositions.length) return;
+      const t = _agentSimTimeMin;
+      let totalEquity = _agentLastCash;
+      const animated = _agentLastPositions.map(p => {
+        const livePrice = _simIntradayPrice(p, t);
+        const qty = p.qty;
+        const avg = p.avg_cost;
+        const isLong = p.side === "long";
+        const upl = isLong ? (livePrice - avg) * qty : (avg - livePrice) * qty;
+        const uplPct = avg > 0 ? ((livePrice / avg - 1) * 100 * (isLong ? 1 : -1)) : 0;
+        if (isLong) {
+          totalEquity += qty * livePrice;
+        } else {
+          totalEquity -= qty * livePrice;
+        }
+        return {...p, current_price: Math.round(livePrice * 100) / 100,
+                unrealized_pnl: Math.round(upl * 100) / 100,
+                unrealized_pnl_pct: Math.round(uplPct * 100) / 100};
+      });
+      _agentRenderPositions(animated);
+      const pnl = totalEquity - _agentDeposit;
+      const pnlPct = _agentDeposit > 0 ? (pnl / _agentDeposit * 100) : 0;
+      const sign = pnl >= 0 ? "+" : "";
+      _agKpi("agent-kpi-equity", "$" + Math.round(totalEquity).toLocaleString());
+      const pnlEl = document.getElementById("agent-kpi-pnl");
+      if (pnlEl) {
+        pnlEl.textContent = sign + "$" + Math.round(pnl).toLocaleString() + " (" + sign + pnlPct.toFixed(1) + "%)";
+        pnlEl.style.color = pnl >= 0 ? "#4ade80" : "#fb7185";
+      }
+      if (_agentLivePeakPnl === null) { _agentLivePeakPnl = pnl; _agentLiveTroughPnl = pnl; }
+      _agentLivePeakPnl = Math.max(_agentLivePeakPnl, pnl);
+      _agentLiveTroughPnl = Math.min(_agentLiveTroughPnl, pnl);
+      const pkEl = document.getElementById("agent-kpi-peak-pnl");
+      const trEl = document.getElementById("agent-kpi-trough-pnl");
+      if (pkEl) pkEl.textContent = _agentFmtSignedPnl(_agentLivePeakPnl);
+      if (trEl) trEl.textContent = _agentFmtSignedPnl(_agentLiveTroughPnl);
+    }
+
+    function _startAgentClock() {
+      if (_agentClockTimer) return;
+      const _chip = (icon, label, value, color) =>
+        "<div style='display:flex;align-items:center;gap:0.35rem;'>" +
+          "<span style='font-size:1rem;'>" + icon + "</span>" +
+          (label ? "<span style='color:#64748b;font-size:0.78rem;'>" + label + "</span>" : "") +
+          "<span style='color:" + (color||"#e2e8f0") + ";font-weight:700;font-size:0.92rem;'>" + value + "</span>" +
+        "</div>";
+      const _sep = "<div style='width:1px;height:1.2rem;background:#334155;'></div>";
+      function tick() {
+        const el = document.getElementById("agent-clock");
+        if (!el) return;
+        const mode = document.getElementById("agent-mode")?.value || "sim";
+        const pad = n => String(n).padStart(2, "0");
+        if (mode === "sim") {
+          if (_agentThinking) {
+            const elapsed = (Date.now() - _agentThinkStart) / 1000;
+            _agentSimTimeMin = Math.min(960, 570 + Math.floor(elapsed * 26));
+          }
+          const simH = Math.floor(_agentSimTimeMin / 60);
+          const simM = _agentSimTimeMin % 60;
+          const simTimeStr = pad(simH) + ":" + pad(simM) + " NY";
+          const pct = _agentSimTotal > 0 ? Math.round((_agentSimStep / _agentSimTotal) * 100) : 0;
+          const barW = 100;
+          const filled = Math.round(barW * pct / 100);
+          const barHtml =
+            "<div style='display:flex;align-items:center;gap:0.4rem;'>" +
+              "<div style='width:" + barW + "px;height:6px;background:#1e293b;border-radius:3px;overflow:hidden;border:1px solid #334155;'>" +
+                "<div style='width:" + filled + "px;height:100%;background:linear-gradient(90deg,#4ade80,#22d3ee);border-radius:3px;transition:width 0.3s;'></div>" +
+              "</div>" +
+              "<span style='color:#cbd5e1;font-weight:700;font-size:0.82rem;min-width:2.5rem;'>" + pct + "%</span>" +
+            "</div>";
+          let statusHtml = "";
+          if (_agentThinking) {
+            _agentThinkDots = (_agentThinkDots + 1) % 4;
+            statusHtml =
+              _sep +
+              "<div style='display:flex;align-items:center;gap:0.3rem;animation:pulse 1.5s ease-in-out infinite;'>" +
+                "<span style='font-size:1rem;'>🧠</span>" +
+                "<span style='color:#facc15;font-weight:600;font-size:0.82rem;'>הסוכן חושב" + ".".repeat(_agentThinkDots + 1) + "</span>" +
+              "</div>";
+          } else if (!_agentRunning && !_agentFastForwarding && _agentSimStep > 0) {
+            statusHtml = _sep +
+              "<div style='display:flex;align-items:center;gap:0.3rem;'>" +
+                "<span style='color:#4ade80;font-weight:600;font-size:0.82rem;'>✓ הסתיים (" + _agentSimStep + " צעדים)</span>" +
+              "</div>";
+          }
+          el.innerHTML =
+            _chip("\u{1F4C5}", "", _agentSimDate || "---", "#e2e8f0") + _sep +
+            _chip("\u{1F552}", "", simTimeStr, "#a78bfa") + _sep +
+            _chip("", "צעד", _agentSimStep + "/" + _agentSimTotal, "#38bdf8") + _sep +
+            barHtml + statusHtml;
+        } else {
+          const now = new Date();
+          const utcH = now.getUTCHours(), utcM = now.getUTCMinutes(), utcS = now.getUTCSeconds();
+          const nyH = (utcH - 4 + 24) % 24, ilH = (utcH + 3) % 24;
+          const nyStr = pad(nyH) + ":" + pad(utcM) + ":" + pad(utcS);
+          const ilStr = pad(ilH) + ":" + pad(utcM) + ":" + pad(utcS);
+          const nyMin = nyH * 60 + utcM;
+          let mktStatus = "", mktColor = "#fb7185";
+          if (nyMin >= 570 && nyMin < 960) { mktStatus = "שוק פתוח"; mktColor = "#4ade80"; }
+          else if (nyMin >= 240 && nyMin < 570) { mktStatus = "טרום מסחר"; mktColor = "#facc15"; }
+          else if (nyMin >= 960 && nyMin < 1200) { mktStatus = "לאחר מסחר"; mktColor = "#facc15"; }
+          else { mktStatus = "שוק סגור"; mktColor = "#fb7185"; }
+          el.innerHTML =
+            _chip("\u{1F1FA}\u{1F1F8}", "", nyStr, "#a78bfa") + _sep +
+            _chip("\u{1F1EE}\u{1F1F1}", "", ilStr, "#38bdf8") + _sep +
+            "<div style='display:flex;align-items:center;gap:0.3rem;'>" +
+              "<span style='width:7px;height:7px;border-radius:50%;background:" + mktColor + ";display:inline-block;" +
+                (mktColor === "#4ade80" ? "box-shadow:0 0 6px " + mktColor + ";" : "") + "'></span>" +
+              "<span style='color:" + mktColor + ";font-weight:700;font-size:0.82rem;'>" + mktStatus + "</span>" +
+            "</div>";
+        }
+      }
+      tick();
+      _agentClockTimer = setInterval(() => { tick(); if (_agentThinking || _agentRunning) _agentAnimatePositions(); }, 500);
+    }
+    function _stopAgentClock() {
+      if (_agentClockTimer) { clearInterval(_agentClockTimer); _agentClockTimer = null; }
+    }
+
+    function agentLog(html) {
+      const el = document.getElementById("agent-log");
+      if (!el) return;
+      el.innerHTML = html + (el.innerHTML ? "<br>" + el.innerHTML : "");
+    }
+
+    const _agKpi = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+
+    function _agentRenderPositions(posArr) {
+      const container = document.getElementById("agent-positions-cards");
+      if (!container) return;
+      if (!posArr || posArr.length === 0) {
+        container.innerHTML = '<div style="color:#8892a4;font-size:0.85rem;grid-column:1/-1;">\u05D0\u05D9\u05DF \u05E4\u05D5\u05D6\u05D9\u05E6\u05D9\u05D5\u05EA \u05E4\u05EA\u05D5\u05D7\u05D5\u05EA</div>';
+        return;
+      }
+      const existing = container.querySelectorAll("[data-pos-sym]");
+      const existingMap = {};
+      existing.forEach(el => { existingMap[el.getAttribute("data-pos-sym")] = el; });
+      const newSyms = new Set(posArr.map(p => p.symbol));
+      existing.forEach(el => {
+        if (!newSyms.has(el.getAttribute("data-pos-sym"))) el.remove();
+      });
+      for (const p of posArr) {
+        const isLong = p.side === "long";
+        const sideLabel = isLong ? "LONG" : "SHORT";
+        const sideBg = isLong ? "rgba(74,222,128,0.12)" : "rgba(251,113,133,0.12)";
+        const sideBorder = isLong ? "#4ade80" : "#fb7185";
+        const sideColor = isLong ? "#4ade80" : "#fb7185";
+        const upl = p.unrealized_pnl || 0;
+        const uplPct = p.unrealized_pnl_pct || 0;
+        const uplColor = upl >= 0 ? "#4ade80" : "#fb7185";
+        const uplSign = upl >= 0 ? "+" : "";
+        const opened = p.opened ? escapeHtml(p.opened) : "";
+        let card = existingMap[p.symbol];
+        const html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
+            <span style="font-weight:700;font-size:0.95rem;color:var(--text);">${escapeHtml(p.symbol)}</span>
+            <span style="font-size:0.7rem;font-weight:700;color:${sideColor};background:${sideColor}22;padding:1px 6px;border-radius:4px;">${sideLabel}</span>
+          </div>
+          <div style="font-size:0.78rem;color:#a0aec0;line-height:1.55;">
+            <div>${p.qty}x @ $${p.avg_cost.toFixed(2)}</div>
+            <div>\u05DE\u05D7\u05D9\u05E8: <b style="color:var(--text);">$${p.current_price.toFixed(2)}</b></div>
+            <div>\u05E8\u05D5\u05D5\u05D7: <b style="color:${uplColor};">${uplSign}$${Math.round(upl).toLocaleString()} (${uplSign}${uplPct.toFixed(1)}%)</b></div>
+            ${opened ? '<div style="color:#64748b;font-size:0.72rem;margin-top:0.15rem;">\u23F0 ' + opened + '</div>' : ''}
+          </div>`;
+        if (card) {
+          card.style.background = sideBg;
+          card.style.borderColor = sideBorder + "33";
+          card.innerHTML = html;
+        } else {
+          card = document.createElement("div");
+          card.setAttribute("data-pos-sym", p.symbol);
+          card.style.cssText = `background:${sideBg};border:1px solid ${sideBorder}33;border-radius:10px;padding:0.55rem 0.7rem;`;
+          card.innerHTML = html;
+          container.appendChild(card);
+        }
+      }
+    }
+
+    function agentUpdateKpis(d) {
+      if (!d) {
+        _agKpi("agent-kpi-status", "\u05DC\u05D0 \u05E4\u05E2\u05D9\u05DC");
+        _agKpi("agent-kpi-mode", "\u2014");
+        _agKpi("agent-kpi-date", "\u2014");
+        _agKpi("agent-kpi-step", "\u2014");
+        _agKpi("agent-kpi-equity", "\u2014");
+        _agKpi("agent-kpi-pnl", "\u2014");
+        _agKpi("agent-kpi-cash", "\u2014");
+        _agKpi("agent-kpi-peak-pnl", "\u2014");
+        _agKpi("agent-kpi-trough-pnl", "\u2014");
+        _agentRenderPositions([]);
+        _agentSimDate = ""; _agentSimStep = 0; _agentSimTotal = 0;
+        _agentLivePeakPnl = null;
+        _agentLiveTroughPnl = null;
+        return;
+      }
+      _agentSimDate = d.date || "";
+      _agentSimStep = d.step || 0;
+      _agentSimTotal = (d.step || 0) + (d.remaining != null ? d.remaining : (d.total_bars || 0));
+      const running = d.running !== false;
+      _agKpi("agent-kpi-status", running ? "\u05E4\u05E2\u05D9\u05DC" : "\u05D4\u05E1\u05EA\u05D9\u05D9\u05DD");
+      const modeLabels = {sim: "\u05E1\u05D9\u05DE\u05D5\u05DC\u05E6\u05D9\u05D4", paper: "\u05E0\u05D9\u05D9\u05E8", live: "\u05D7\u05D9"};
+      const riskLabels = {low: "\u05E0\u05DE\u05D5\u05DA", medium: "\u05D1\u05D9\u05E0\u05D5\u05E0\u05D9", high: "\u05DE\u05D5\u05D2\u05D1\u05E8"};
+      const ml = modeLabels[d.mode] || d.mode || "\u2014";
+      const rl = riskLabels[d.risk_level] || "";
+      _agKpi("agent-kpi-mode", ml + (rl ? " | \u05E1\u05D9\u05DB\u05D5\u05DF " + rl : ""));
+      _agKpi("agent-kpi-date", d.date || "\u2014");
+      const stepRemaining = d.remaining != null ? d.remaining : (d.total_bars ? d.total_bars - (d.step||0) : 0);
+      _agKpi("agent-kpi-step", (d.step != null ? d.step : "\u2014") + (d.total_bars ? " / " + (d.step + stepRemaining) : ""));
+      const eq = d.equity != null ? Number(d.equity) : null;
+      _agKpi("agent-kpi-equity", eq != null ? "$" + eq.toLocaleString(undefined, {maximumFractionDigits:0}) : "\u2014");
+      if (eq != null) {
+        const pnl = d.pnl != null ? d.pnl : eq - _agentDeposit;
+        const pct = d.pnl_pct != null ? d.pnl_pct : ((pnl / _agentDeposit) * 100);
+        const sign = pnl >= 0 ? "+" : "";
+        const el = document.getElementById("agent-kpi-pnl");
+        if (el) {
+          el.textContent = sign + "$" + Math.round(pnl).toLocaleString() + " (" + sign + pct.toFixed(1) + "%)";
+          el.style.color = pnl >= 0 ? "#4ade80" : "#fb7185";
+        }
+      }
+      _agKpi("agent-kpi-cash", d.cash != null ? "$" + Number(d.cash).toLocaleString(undefined, {maximumFractionDigits:0}) : "\u2014");
+
+      const pnlNow = d.pnl != null ? Number(d.pnl) : (eq != null ? eq - _agentDeposit : 0);
+      if (_agentLivePeakPnl === null) { _agentLivePeakPnl = pnlNow; _agentLiveTroughPnl = pnlNow; }
+      _agentLivePeakPnl = Math.max(_agentLivePeakPnl, pnlNow);
+      _agentLiveTroughPnl = Math.min(_agentLiveTroughPnl, pnlNow);
+      if (d.pnl_peak != null) _agentLivePeakPnl = Math.max(_agentLivePeakPnl, Number(d.pnl_peak));
+      if (d.pnl_trough != null) _agentLiveTroughPnl = Math.min(_agentLiveTroughPnl, Number(d.pnl_trough));
+      const pkEl = document.getElementById("agent-kpi-peak-pnl");
+      const trEl = document.getElementById("agent-kpi-trough-pnl");
+      if (pkEl) pkEl.textContent = _agentFmtSignedPnl(_agentLivePeakPnl);
+      if (trEl) trEl.textContent = _agentFmtSignedPnl(_agentLiveTroughPnl);
+
+      _agentLastPositions = d.positions_detail || [];
+      _agentLastCash = d.cash || 0;
+      _agentRenderPositions(_agentLastPositions);
+
+      const dec = d.last_decision;
+      if (dec) {
+        const mvPanel = document.getElementById("agent-market-view-panel");
+        if (mvPanel) mvPanel.style.display = "";
+        const mvEl = document.getElementById("agent-market-view");
+        if (mvEl) mvEl.textContent = dec.market_view || "\u2014";
+        const rnEl = document.getElementById("agent-risk-note");
+        if (rnEl) rnEl.textContent = dec.risk_note || "\u2014";
+      }
+
+      if (d.error) {
+        const err = document.getElementById("planb-error");
+        if (err) err.textContent = d.error;
+      }
+    }
+
+    function agentAddTrades(trades) {
+      if (!trades || !trades.length) return;
+      const tbody = document.getElementById("agent-trades-body");
+      if (!tbody) return;
+      if (_agentTradeCount === 0) tbody.innerHTML = "";
+      const actionLabels = {buy:"\u05E7\u05E0\u05D9\u05D9\u05D4", sell:"\u05DE\u05DB\u05D9\u05E8\u05D4", short:"\u05E9\u05D5\u05E8\u05D8", cover:"\u05E1\u05D2\u05D9\u05E8\u05D4"};
+      const actionColors = {buy:"#4ade80", sell:"#fb7185", short:"#f472b6", cover:"#a78bfa"};
+      for (const t of trades) {
+        if (_agentTradeCount > 0) {
+          const existing = tbody.querySelector("tr[data-step='" + t.step + "'][data-sym='" + t.symbol + "'][data-act='" + t.action + "']");
+          if (existing) continue;
+        }
+        _agentTradeCount++;
+        const label = actionLabels[t.action] || t.action;
+        const color = actionColors[t.action] || "#94a3b8";
+        const tr = document.createElement("tr");
+        tr.setAttribute("data-step", t.step);
+        tr.setAttribute("data-sym", t.symbol);
+        tr.setAttribute("data-act", t.action);
+        tr.innerHTML =
+          "<td>" + _agentTradeCount + "</td>" +
+          "<td>" + escapeHtml(t.date || "\u2014") + "</td>" +
+          "<td>" + escapeHtml(t.symbol || "") + "</td>" +
+          "<td style=\"color:" + color + ";font-weight:700;\">" + label + "</td>" +
+          "<td>" + (t.price != null ? "$" + Number(t.price).toFixed(2) : "\u2014") + "</td>" +
+          "<td>" + (t.qty || "") + "</td>" +
+          "<td style=\"direction:rtl;\">" + escapeHtml(t.reason || "") + "</td>";
+        tbody.prepend(tr);
+      }
+    }
+
+    function agentLogDecision(d) {
+      if (!d) return;
+      const date = d.date || "";
+      const eq = d.equity != null ? "$" + Number(d.equity).toLocaleString(undefined, {maximumFractionDigits:0}) : "";
+      const dec = d.last_decision;
+
+      if (dec && dec.actions && dec.actions.length > 0) {
+        for (const a of dec.actions) {
+          let cls = "log-hold";
+          let txt = date + " \u2014 ";
+          if (a.action === "buy") { cls = "log-buy"; txt += "\u05E7\u05E0\u05D4 " + a.quantity + " " + a.symbol; }
+          else if (a.action === "sell") { cls = "log-sell"; txt += "\u05DE\u05DB\u05E8 " + a.quantity + " " + a.symbol; }
+          else if (a.action === "short") { cls = "log-sell"; txt += "\u05E9\u05D5\u05E8\u05D8 " + a.quantity + " " + a.symbol; }
+          else if (a.action === "cover") { cls = "log-buy"; txt += "\u05E1\u05D2\u05E8 \u05E9\u05D5\u05E8\u05D8 " + a.quantity + " " + a.symbol; }
+          else { txt += "\u05DE\u05DE\u05E9\u05D9\u05DA \u05DC\u05D4\u05D7\u05D6\u05D9\u05E7 " + a.symbol; }
+          if (a.reason) txt += " (" + a.reason + ")";
+          txt += " \u00B7 \u05E9\u05D5\u05D5\u05D9: " + eq;
+          agentLog("<span class=\"" + cls + "\">" + escapeHtml(txt) + "</span>");
+        }
+      } else {
+        agentLog("<span class=\"log-hold\">" + escapeHtml(date + " \u2014 \u05D0\u05D9\u05DF \u05E4\u05E2\u05D5\u05DC\u05D5\u05EA \u00B7 \u05E9\u05D5\u05D5\u05D9: " + eq) + "</span>");
+      }
+
+      if (dec && dec.market_view) {
+        agentLog("<span style=\"color:var(--muted);font-size:0.8rem;\">\u05EA\u05DE\u05D5\u05E0\u05EA \u05E9\u05D5\u05E7: " + escapeHtml(dec.market_view) + "</span>");
+      }
+    }
+
+    function agentSetButtons(running) {
+      const s = document.getElementById("agent-btn-start");
+      const f = document.getElementById("agent-btn-ff");
+      const t = document.getElementById("agent-btn-stop");
+      if (s) s.disabled = false;
+      if (f) f.disabled = false;
+      if (t) t.disabled = !running;
+    }
+
+    function agentStopLoop() {
+      if (_agentTimer) { clearInterval(_agentTimer); _agentTimer = null; }
+      _agentRunning = false;
+      _agentBusy = false;
+      agentSetButtons(false);
+    }
+
+    function _agentReadInputs() {
+      const mode = document.getElementById("agent-mode")?.value || "sim";
+      const riskLevel = document.getElementById("agent-risk-level")?.value || "medium";
+      const symsRaw = (document.getElementById("agent-symbols")?.value || "SPY").trim();
+      const symbols = symsRaw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+      const deposit = parseInt(document.getElementById("agent-deposit")?.value || "100000", 10) || 100000;
+      const startDate = document.getElementById("agent-start-date")?.value || null;
+      _agentDeposit = deposit;
+      return { mode, symbols, deposit, start_date: startDate, risk_level: riskLevel };
+    }
+
+    (function() {
+      const modeEl = document.getElementById("agent-mode");
+      if (!modeEl) return;
+      function toggleDateField() {
+        const dateWrap = document.getElementById("agent-date-wrap");
+        if (dateWrap) dateWrap.style.display = modeEl.value === "sim" ? "" : "none";
+      }
+      modeEl.addEventListener("change", toggleDateField);
+      toggleDateField();
+    })();
+
+    async function agentStartSession() {
+      agentStopLoop();
+      try { await fetch("/api/agent/stop", { method: "POST" }); } catch (_) {}
+      const inputs = _agentReadInputs();
+      if (inputs.mode !== "sim") inputs.start_date = null;
+      _agentTradeCount = 0;
+      const tbody = document.getElementById("agent-trades-body");
+      if (tbody) tbody.innerHTML = "<tr><td colspan=\"7\" class=\"empty-msg\">\u05D4\u05E1\u05D5\u05DB\u05DF \u05DE\u05EA\u05D7\u05D9\u05DC\u2026</td></tr>";
+      const logEl = document.getElementById("agent-log");
+      if (logEl) logEl.innerHTML = "";
+      const err = document.getElementById("planb-error");
+      if (err) err.textContent = "";
+      agentUpdateKpis(null);
+      const mvPanel = document.getElementById("agent-market-view-panel");
+      if (mvPanel) mvPanel.style.display = "none";
+      _startAgentClock();
+
+      const r = await fetch("/api/agent/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(inputs),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!d.ok) throw new Error(d.error || "agent start failed");
+      agentUpdateKpis(d);
+      const modeLabel = {sim:"\u05E1\u05D9\u05DE\u05D5\u05DC\u05E6\u05D9\u05D4", paper:"\u05E0\u05D9\u05D9\u05E8", live:"\u05D7\u05D9"}[inputs.mode] || inputs.mode;
+      agentLog("\u05D4\u05E1\u05D5\u05DB\u05DF \u05D4\u05EA\u05D7\u05D9\u05DC \u05D1\u05DE\u05E6\u05D1 <strong>" + escapeHtml(modeLabel) + "</strong> \u05E2\u05DD " + inputs.symbols.length + " \u05E1\u05D9\u05DE\u05D1\u05D5\u05DC\u05D9\u05DD");
+      if (inputs.mode !== "sim") {
+        agentLog("<span style='color:#facc15;'>\u05DE\u05E6\u05D1 " + escapeHtml(modeLabel) + " \u2014 \u05D4\u05E1\u05D5\u05DB\u05DF \u05D9\u05E9\u05DC\u05D7 \u05E4\u05E7\u05D5\u05D3\u05D5\u05EA \u05D0\u05DE\u05D9\u05EA\u05D9\u05D5\u05EA \u05DC-Alpaca</span>");
+      }
+      return d;
+    }
+
+    async function agentDoTick() {
+      _agentThinking = true;
+      _agentThinkStart = Date.now();
+      _agentSimTimeMin = 570;
+      try {
+        const r = await fetch("/api/agent/tick", { method: "POST", signal: AbortSignal.timeout(120000) });
+        const d = await r.json().catch(() => ({}));
+        if (!d.ok) throw new Error(d.error || "agent tick failed");
+        _agentSimTimeMin = 960;
+        agentUpdateKpis(d);
+        agentLogDecision(d);
+        if (d.last_trades) agentAddTrades(d.last_trades);
+        return d;
+      } finally {
+        _agentThinking = false;
+      }
+    }
+
+    let _agentErrorCount = 0;
+    function _agentStartTickLoop() {
+      if (_agentTimer) clearInterval(_agentTimer);
+      _agentErrorCount = 0;
+      const mode = document.getElementById("agent-mode")?.value || "sim";
+      const interval = mode === "sim" ? 2000 : 30000;
+      async function doOneTick() {
+        if (!_agentRunning || _agentBusy) return;
+        _agentBusy = true;
+        try {
+          const d = await agentDoTick();
+          _agentErrorCount = 0;
+          if (!d.running) {
+            agentStopLoop();
+            agentLog("<strong>\u05D4\u05E1\u05D5\u05DB\u05DF \u05E1\u05D9\u05D9\u05DD.</strong>");
+          }
+        } catch (e) {
+          _agentErrorCount++;
+          agentLog("\u05E9\u05D2\u05D9\u05D0\u05D4 (" + _agentErrorCount + "): " + escapeHtml(e.message || String(e)));
+          if (_agentErrorCount >= 5) {
+            agentLog("<strong>\u05E2\u05E6\u05D9\u05E8\u05D4 \u05D0\u05D7\u05E8\u05D9 5 \u05E9\u05D2\u05D9\u05D0\u05D5\u05EA \u05E8\u05E6\u05D5\u05E4\u05D5\u05EA.</strong>");
+            agentStopLoop();
+          }
+        } finally { _agentBusy = false; }
+      }
+      doOneTick();
+      _agentTimer = window.setInterval(doOneTick, interval);
+    }
+
+    async function agentStart() {
+      const err = document.getElementById("planb-error");
+      try {
+        agentSetButtons(true);
+        _agKpi("agent-kpi-status", "\u05DE\u05EA\u05D7\u05D9\u05DC\u2026");
+        await agentStartSession();
+        _agentRunning = true;
+        _agentStartTickLoop();
+      } catch (e) {
+        agentStopLoop();
+        if (err) err.textContent = e.message || String(e);
+      }
+    }
+
+    function _ffAnimateDay(durationMs) {
+      return new Promise(resolve => {
+        const start = Date.now();
+        const el = document.getElementById("agent-clock");
+        function frame() {
+          const elapsed = Date.now() - start;
+          const frac = Math.min(1, elapsed / durationMs);
+          _agentSimTimeMin = Math.round(570 + frac * 390);
+          _agentAnimatePositions();
+          if (el) {
+            const pad = n => String(n).padStart(2, "0");
+            const simH = Math.floor(_agentSimTimeMin / 60);
+            const simM = _agentSimTimeMin % 60;
+            const pct = _agentSimTotal > 0 ? Math.round((_agentSimStep / _agentSimTotal) * 100) : 0;
+            const barW = 100;
+            const filled = Math.round(barW * pct / 100);
+            el.innerHTML =
+              "<div style='display:flex;align-items:center;gap:0.35rem;'><span style='font-size:1rem;'>\u{1F4C5}</span><span style='color:#e2e8f0;font-weight:700;font-size:0.92rem;'>" + (_agentSimDate || "---") + "</span></div>" +
+              "<div style='width:1px;height:1.2rem;background:#334155;'></div>" +
+              "<div style='display:flex;align-items:center;gap:0.35rem;'><span style='font-size:1rem;'>\u{1F552}</span><span style='color:#a78bfa;font-weight:700;font-size:0.92rem;'>" + pad(simH) + ":" + pad(simM) + " NY</span></div>" +
+              "<div style='width:1px;height:1.2rem;background:#334155;'></div>" +
+              "<div style='display:flex;align-items:center;gap:0.35rem;'><span style='color:#64748b;font-size:0.78rem;'>\u05E6\u05E2\u05D3</span><span style='color:#38bdf8;font-weight:700;font-size:0.92rem;'>" + _agentSimStep + "/" + _agentSimTotal + "</span></div>" +
+              "<div style='width:1px;height:1.2rem;background:#334155;'></div>" +
+              "<div style='display:flex;align-items:center;gap:0.4rem;'><div style='width:" + barW + "px;height:6px;background:#1e293b;border-radius:3px;overflow:hidden;border:1px solid #334155;'><div style='width:" + filled + "px;height:100%;background:linear-gradient(90deg,#4ade80,#22d3ee);border-radius:3px;'></div></div><span style='color:#cbd5e1;font-weight:700;font-size:0.82rem;'>" + pct + "%</span></div>";
+          }
+          if (frac < 1) requestAnimationFrame(frame);
+          else resolve();
+        }
+        requestAnimationFrame(frame);
+      });
+    }
+
+    async function agentFastForward() {
+      const err = document.getElementById("planb-error");
+      try {
+        _agentFastForwarding = true;
+        agentSetButtons(true);
+        _agKpi("agent-kpi-status", "\u05D4\u05E8\u05E6\u05D4 \u05DE\u05D4\u05D9\u05E8\u05D4\u2026");
+        await agentStartSession();
+        _agentRunning = true;
+        let steps = 0;
+        let errors = 0;
+        while (_agentRunning) {
+          try {
+            _agentThinking = true;
+            _agentSimTimeMin = 570;
+            const r = await fetch("/api/agent/tick-fast", { method: "POST", signal: AbortSignal.timeout(15000) });
+            const d = await r.json().catch(() => ({}));
+            if (!d.ok) throw new Error(d.error || "tick failed");
+            _agentThinking = false;
+            agentUpdateKpis(d);
+            if (d.last_trades) agentAddTrades(d.last_trades);
+            steps++;
+            errors = 0;
+            if (!d.running) {
+              agentLog("\u05D4\u05E1\u05D9\u05DE\u05D5\u05DC\u05E6\u05D9\u05D4 \u05D4\u05D2\u05D9\u05E2\u05D4 \u05DC\u05E1\u05D5\u05E3 \u05D4\u05E0\u05EA\u05D5\u05E0\u05D9\u05DD (" + steps + " \u05E6\u05E2\u05D3\u05D9\u05DD)");
+              break;
+            }
+            if (steps > 5000) { agentLog("\u05E0\u05E2\u05E6\u05E8 \u05D0\u05D7\u05E8\u05D9 5000 \u05E6\u05E2\u05D3\u05D9\u05DD."); break; }
+            await _ffAnimateDay(200);
+          } catch (e) {
+            _agentThinking = false;
+            errors++;
+            if (errors > 10) { agentLog("\u05E9\u05D2\u05D9\u05D0\u05D4 \u05D7\u05D5\u05D6\u05E8\u05EA: " + escapeHtml(e.message || String(e))); break; }
+            await new Promise(r => setTimeout(r, 300));
+          }
+        }
+        agentLog("<strong>\u05D4\u05E8\u05E6\u05D4 \u05DE\u05D4\u05D9\u05E8\u05D4 \u05D4\u05E1\u05EA\u05D9\u05D9\u05DE\u05D4 \u2014 " + steps + " \u05E6\u05E2\u05D3\u05D9\u05DD.</strong>");
+      } catch (e) {
+        if (err) err.textContent = e.message || String(e);
+        agentLog("\u05E9\u05D2\u05D9\u05D0\u05D4: " + escapeHtml(e.message || String(e)));
+      } finally {
+        _agentRunning = false;
+        _agentThinking = false;
+        _agentFastForwarding = false;
+        agentStopLoop();
+      }
+    }
+
+    async function agentStop() {
+      agentStopLoop();
+      try { await fetch("/api/agent/stop", { method: "POST" }); } catch (_) {}
+      agentLog("\u05D4\u05E1\u05D5\u05DB\u05DF \u05E0\u05E2\u05E6\u05E8.");
+      _agKpi("agent-kpi-status", "\u05E0\u05E2\u05E6\u05E8");
+    }
+
+    async function planbOnTabEnter() {
+      _startAgentClock();
+      if (_agentFastForwarding) return;
+      const err = document.getElementById("planb-error");
+      try {
+        const r = await fetch("/api/agent/status", { method: "GET" });
+        const d = await r.json().catch(() => ({}));
+        if (d.ok && d.running) {
+          agentUpdateKpis(d);
+          agentSetButtons(true);
+          _agentRunning = true;
+          if (!_agentFastForwarding) _agentStartTickLoop();
+        } else {
+          agentSetButtons(false);
+        }
+      } catch (e) {
+        agentSetButtons(false);
+        if (err) err.textContent = "\u05D0\u05D9\u05DF \u05D7\u05D9\u05D1\u05D5\u05E8 \u05DC\u05E9\u05E8\u05EA: " + (e.message || String(e));
+      }
+    }
+
+    let _currentSubMode = "backtest";
+
+    function showSubMode(mode) {
+      _currentSubMode = mode;
+      document.querySelectorAll(".sub-tab").forEach(b => b.classList.toggle("active", b.id === "subtab-" + mode));
+      const isBT = mode === "backtest";
+      document.querySelectorAll(".bt-only").forEach(el => el.style.display = isBT ? "" : "none");
+      document.querySelectorAll(".rt-only").forEach(el => el.style.display = isBT ? "none" : "");
+
+      const simDateLabel = document.querySelector('#kpi-sim-date')?.closest('.kpi')?.querySelector('.kpi-label');
+      const statusLabel = document.querySelector('#kpi-status')?.closest('.kpi')?.querySelector('.kpi-label');
+      const daysLabel = document.querySelector('#kpi-days')?.closest('.kpi')?.querySelector('.kpi-label');
+      if (simDateLabel) simDateLabel.textContent = isBT ? "יום סימולציה" : "תאריך נוכחי";
+      if (statusLabel) statusLabel.textContent = isBT ? "סטטוס" : "סטטוס לייב";
+      if (daysLabel) daysLabel.textContent = isBT ? "ימים" : "צעדים";
+
+      if (!isBT) {
+        _startMarketClock();
+        _rtUpdateTickerClock();
+        if (_rtTickerClockTimer) clearInterval(_rtTickerClockTimer);
+        _rtTickerClockTimer = setInterval(_rtUpdateTickerClock, 1000);
+        _rtRefreshNews().catch(() => {});
+      } else {
+        _stopMarketClock();
+        if (_rtTickerClockTimer) {
+          clearInterval(_rtTickerClockTimer);
+          _rtTickerClockTimer = null;
+        }
+        stopRealtimeSim();
+      }
+    }
+
+    let _marketClockTimer = null;
+    function _startMarketClock() {
+      _updateMarketClock();
+      if (!_marketClockTimer) _marketClockTimer = setInterval(_updateMarketClock, 1000);
+    }
+    function _stopMarketClock() {
+      if (_marketClockTimer) { clearInterval(_marketClockTimer); _marketClockTimer = null; }
+    }
+    function _updateMarketClock() {
+      const now = new Date();
+      const ilTime = now.toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const nyTime = now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+      const nyHour = parseInt(now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false }));
+      const nyMin = now.getMinutes();
+      const nyDay = now.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" });
+      const isWeekend = ["Sat", "Sun"].includes(nyDay);
+      const marketOpen = !isWeekend && ((nyHour === 9 && nyMin >= 30) || (nyHour >= 10 && nyHour < 16));
+      const preMarket = !isWeekend && (nyHour >= 4 && (nyHour < 9 || (nyHour === 9 && nyMin < 30)));
+      const afterHours = !isWeekend && (nyHour >= 16 && nyHour < 20);
+
+      const el = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+      el("rt-clock-il", ilTime);
+      el("rt-clock-ny", nyTime);
+      const statusEl = document.getElementById("rt-market-status");
+      if (statusEl) {
+        if (marketOpen) { statusEl.textContent = "🟢 שוק פתוח"; statusEl.style.color = "#4ade80"; }
+        else if (preMarket) { statusEl.textContent = "🟡 לפני פתיחה"; statusEl.style.color = "#fbbf24"; }
+        else if (afterHours) { statusEl.textContent = "🟠 מסחר מאוחר"; statusEl.style.color = "#fb923c"; }
+        else { statusEl.textContent = "🔴 שוק סגור"; statusEl.style.color = "#fb7185"; }
+      }
+      el("rt-live-date", now.toLocaleDateString("he-IL", { day: "numeric", month: "short", year: "numeric" }));
+    }
+
+    document.querySelectorAll(".tab-btn").forEach(b => {
+      b.addEventListener("click", () => showTab(b.getAttribute("aria-controls")));
+    });
+
+    if (location.hash === "#planb") showTab("sec-planb");
+    else if (location.hash === "#trading") showTab("sec-trading");
+    else if (location.hash === "#simulation") showTab("sec-simulation");
+
+    /* ── Paper Autopilot API helpers ── */
+    async function fetchPaperStatus() {
+      const urls = ["/api/paper/status", "/api/simulation/paper/status"];
+      for (const url of urls) {
+        const r = await fetch(url);
+        let d = {};
+        try { d = await r.json(); } catch (_) { d = {}; }
+        if (r.ok) return d;
+        if (r.status !== 404) throw new Error(formatApiError(d, r));
+      }
+      throw new Error("Not Found");
+    }
+
+    async function postPaperStart(body) {
+      const urls = ["/api/paper/start", "/api/simulation/paper/start"];
+      for (const url of urls) {
+        const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) return d;
+        if (r.status !== 404) throw new Error(formatApiError(d, r));
+      }
+      throw new Error("Not Found");
+    }
+
+    async function postPaperStop() {
+      const urls = ["/api/paper/stop", "/api/simulation/paper/stop"];
+      for (const url of urls) {
+        const r = await fetch(url, { method: "POST" });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) return d;
+        if (r.status !== 404) throw new Error(formatApiError(d, r));
+      }
+      throw new Error("Not Found");
+    }
+
+    /* ── Paper Polling ── */
+    function stopPaperPoll() {
+      if (_paperPollTimer) { clearInterval(_paperPollTimer); _paperPollTimer = null; }
+    }
+
+    function startPaperPoll() {
+      stopPaperPoll();
+      refreshPaper().catch(() => {});
+      _paperPollTimer = setInterval(() => refreshPaper().catch(() => {}), 2000);
+    }
+
+    async function refreshPaper() {
+      try {
+        const s = await fetchPaperStatus();
+        renderPaperPanel(s);
+        const err = document.getElementById("paper-error");
+        if (err) err.textContent = "";
+      } catch (e) {
+        const err = document.getElementById("paper-error");
+        if (err) err.textContent = "שגיאת חיבור: " + (e.message || String(e));
+      }
+    }
+
+    /* ── Render paper panel ── */
+    function fmtUsd(v) {
+      return v != null ? Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
+    }
+
+    function renderPaperPanel(s) {
+      const setEl = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+
+      if (!s.active) {
+        ["kpi-status","kpi-sim-date","kpi-days","kpi-equity","kpi-pnl","kpi-winrate","kpi-avg-r","kpi-closed","kpi-avg-win","kpi-avg-loss","kpi-leverage","kpi-sentiment","kpi-longs","kpi-shorts"].forEach(id => setEl(id, id === "kpi-status" ? "לא פעיל" : "—"));
+      } else {
+        const isLive = _currentSubMode === "realtime";
+        let statusTxt;
+        if (s.running) {
+          statusTxt = isLive ? "⚡ לייב פעיל" : "רץ ברקע — יום " + (s.days_simulated || 0);
+        } else {
+          statusTxt = isLive ? "לייב עצר" : "הושלם (" + (s.days_simulated || 0) + " ימים)";
+        }
+        setEl("kpi-status", statusTxt);
+        setEl("kpi-sim-date", s.sim_date || "—");
+        setEl("kpi-days", s.days_simulated != null ? String(s.days_simulated) : "—");
+        setEl("kpi-equity", "$" + fmtUsd(s.equity_usd));
+
+        const pnl = s.pnl_usd;
+        const dep = s.initial_deposit_usd || 100000;
+        const pnlPct = pnl != null ? (pnl / dep * 100).toFixed(1) : null;
+        const pnlEl = document.getElementById("kpi-pnl");
+        if (pnlEl && pnl != null) {
+          pnlEl.textContent = (pnl >= 0 ? "+" : "") + fmtUsd(pnl) + " $ (" + (pnlPct >= 0 ? "+" : "") + pnlPct + "%)";
+          pnlEl.style.color = pnl >= 0 ? "var(--ok)" : "var(--danger)";
+        }
+
+        const wrEl = document.getElementById("kpi-winrate");
+        if (wrEl) {
+          const wr = s.win_rate;
+          wrEl.textContent = wr != null ? wr + "%" : "—";
+          if (wr != null) wrEl.style.color = wr >= 50 ? "var(--ok)" : "var(--danger)";
+        }
+        const arEl = document.getElementById("kpi-avg-r");
+        if (arEl) {
+          const ar = s.avg_r;
+          arEl.textContent = ar != null ? String(ar) + "R" : "—";
+          if (ar != null) arEl.style.color = ar >= 0 ? "var(--ok)" : "var(--danger)";
+        }
+        setEl("kpi-closed", s.total_closed != null ? String(s.total_closed) : "—");
+        setEl("kpi-avg-win", s.avg_win != null ? "$" + fmtUsd(s.avg_win) : "—");
+        setEl("kpi-avg-loss", s.avg_loss != null ? "$" + fmtUsd(s.avg_loss) : "—");
+        setEl("kpi-leverage", s.leverage != null ? s.leverage + "x" : "—");
+
+        const sentEl = document.getElementById("kpi-sentiment");
+        if (sentEl) {
+          if (s.sentiment_available) {
+            sentEl.textContent = "פעיל";
+            sentEl.style.color = "var(--ok)";
+          } else if (s.grok_key_set === false) {
+            sentEl.innerHTML = '<span style="color:var(--danger)">חסר GROK_API_KEY</span>';
+          } else {
+            sentEl.textContent = "ממתין...";
+            sentEl.style.color = "var(--muted)";
+          }
+        }
+
+        const positions = Array.isArray(s.positions) ? s.positions : [];
+        const longs = positions.filter(p => p.side === "LONG").length;
+        const shorts = positions.filter(p => p.side === "SHORT").length;
+        setEl("kpi-longs", String(longs));
+        setEl("kpi-shorts", String(shorts));
+
+        setEl("rt-step-count", s.days_simulated != null ? String(s.days_simulated) : "0");
+
+        // OOS panel
+        const oosPanel = document.getElementById("oos-panel");
+        if (oosPanel && !s.running && s.in_sample && s.out_of_sample) {
+          oosPanel.style.display = "";
+          const is = s.in_sample, oos = s.out_of_sample;
+          setEl("oos-is-trades", String(is.count || 0));
+          setEl("oos-is-pnl", "$" + fmtUsd(is.pnl || 0));
+          setEl("oos-is-wr", (is.win_rate || 0) + "%");
+          setEl("oos-is-r", (is.avg_r || 0) + "R");
+          setEl("oos-oos-trades", String(oos.count || 0));
+          setEl("oos-oos-pnl", "$" + fmtUsd(oos.pnl || 0));
+          setEl("oos-oos-wr", (oos.win_rate || 0) + "%");
+          setEl("oos-oos-r", (oos.avg_r || 0) + "R");
+          const oosPnlEl = document.getElementById("oos-oos-pnl");
+          if (oosPnlEl) oosPnlEl.style.color = (oos.pnl || 0) >= 0 ? "var(--ok)" : "var(--danger)";
+          const isPnlEl = document.getElementById("oos-is-pnl");
+          if (isPnlEl) isPnlEl.style.color = (is.pnl || 0) >= 0 ? "var(--ok)" : "var(--danger)";
+        } else if (oosPanel) {
+          oosPanel.style.display = "none";
+        }
+      }
+
+      // Positions strip with stop/target/P&L%
+      const strip = document.getElementById("paper-positions-strip");
+      if (strip && Array.isArray(s.positions) && s.positions.length) {
+        const sorted = [...s.positions].sort((a, b) => a.symbol.localeCompare(b.symbol));
+        strip.innerHTML = sorted.map(p => {
+          const cls = p.side === "LONG" ? "long" : "short";
+          const arrow = p.side === "LONG" ? "\u25B2" : "\u25BC";
+          const pnlPct = p.pnl_pct != null ? ` ${p.pnl_pct >= 0 ? "+" : ""}${p.pnl_pct.toFixed(1)}%` : "";
+          const levTxt = p.symbol_leverage ? ` ${p.symbol_leverage}x` : "";
+          const sentVal = p.sentiment != null && p.sentiment !== 0 ? p.sentiment : null;
+          const sentIcon = sentVal != null ? (sentVal > 0.3 ? " \u{1F7E2}" : sentVal < -0.3 ? " \u{1F534}" : " \u26AA") : "";
+          const stopTxt = p.stop ? ` SL:$${p.stop}` : "";
+          const tgtTxt = p.target ? ` TP:$${p.target}` : "";
+          const stratTxt = p.strategy ? ` [${p.strategy}]` : "";
+          const sentTitle = sentVal != null ? ` sent:${sentVal}` : "";
+          const title = `${p.symbol}: ${p.side} ${Math.abs(p.qty)} @ $${p.avg_px_usd} lev:${p.symbol_leverage || "?"}x${sentTitle}${stopTxt}${tgtTxt}${stratTxt}`;
+          return `<span class="pos-chip ${cls}" title="${escapeHtml(title)}">${arrow} ${escapeHtml(p.symbol)}${levTxt}${pnlPct}${sentIcon}</span>`;
+        }).join("");
+      } else if (strip) {
+        strip.innerHTML = "";
+      }
+
+      // Error
+      const errEl = document.getElementById("paper-error");
+      if (errEl && s.last_error) errEl.textContent = s.last_error;
+
+      // Trades table — skip re-render if card is open and count unchanged
+      const tbody = document.getElementById("paper-trades-body");
+      if (!tbody) return;
+      const trs = Array.isArray(s.trades) ? s.trades : [];
+      if (!trs.length) {
+        const msg = s.active ? "ממתין לעסקה ראשונה..." : "לחץ «התחל סימולציה» להפעלת הבקטסט";
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-msg">${msg}</td></tr>`;
+        _paperLastTrades = [];
+        _expandedTradeIdx = -1;
+        return;
+      }
+
+      const tradeCountChanged = trs.length !== _paperLastTrades.length;
+      _paperLastTrades = trs;
+
+      if (_expandedTradeIdx >= 0 && !tradeCountChanged) return;
+
+      _rebuildTradesTable(tbody, trs);
+    }
+
+    function _rebuildTradesTable(tbody, trs) {
+      const savedExpand = _expandedTradeIdx;
+      _expandedTradeIdx = -1;
+      tbody.innerHTML = trs.map((t, i) => {
+        const sideClass = t.side === "BUY" ? "side-buy" : "side-sell";
+        const resClass = t.execution === "DRY_RUN_RECORDED" ? "exec-ok" : "exec-block";
+        const resTxt = t.execution === "DRY_RUN_RECORDED" ? "V" : "X";
+        const seq = t.seq != null ? t.seq : i + 1;
+        const pt = t.position_type || "";
+        const ptClass = pt === "LONG" ? "pos-long" : pt === "SHORT" ? "pos-short" : pt === "COVER" ? "pos-cover" : pt === "PYRAMID" ? "pos-pyramid" : "pos-close";
+        const slTp = (t.stop || t.target) ? `${t.stop || "—"} / ${t.target || "—"}` : "—";
+        return `<tr class="trade-row" data-idx="${i}" tabindex="0">` +
+          `<td>${seq}</td>` +
+          `<td>${escapeHtml(String(t.sim_date ?? t.time ?? ""))}</td>` +
+          `<td><strong>${escapeHtml(String(t.symbol ?? ""))}</strong></td>` +
+          `<td><span class="${ptClass}">${escapeHtml(pt)}</span></td>` +
+          `<td class="${sideClass}">${escapeHtml(String(t.side ?? ""))}</td>` +
+          `<td>${escapeHtml(String(t.qty ?? ""))}</td>` +
+          `<td>$${escapeHtml(String(t.ref_price_usd ?? ""))}</td>` +
+          `<td>${slTp}</td>` +
+          `<td class="${resClass}">${resTxt}</td></tr>`;
+      }).join("");
+      if (savedExpand >= 0 && savedExpand < trs.length) {
+        toggleTradeCard(savedExpand);
+      }
+    }
+
+    /* ── Trade detail card (inline expand) ── */
+    let _expandedTradeIdx = -1;
+
+    function toggleTradeCard(idx) {
+      const tbody = document.getElementById("paper-trades-body");
+      if (!tbody) return;
+      const existing = tbody.querySelector(`.trade-detail-row[data-detail="${idx}"]`);
+      // close any open
+      tbody.querySelectorAll(".trade-detail-row").forEach(r => r.remove());
+      tbody.querySelectorAll(".trade-row.active").forEach(r => r.classList.remove("active"));
+      if (existing || idx === _expandedTradeIdx) {
+        _expandedTradeIdx = -1;
+        return;
+      }
+      _expandedTradeIdx = idx;
+      const t = _paperLastTrades[idx];
+      if (!t) return;
+
+      const row = tbody.querySelector(`tr[data-idx="${idx}"]`);
+      if (row) row.classList.add("active");
+
+      const a = t.analysis || {};
+      const r = a.risk || {};
+      const strat = a.strategy || {};
+      const ex = a.execution || {};
+      const notional = t.qty && t.ref_price_usd ? (t.qty * t.ref_price_usd) : 0;
+      const pt = t.position_type || "—";
+      const isOk = t.execution === "DRY_RUN_RECORDED";
+
+      const detailRow = document.createElement("tr");
+      detailRow.className = "trade-detail-row";
+      detailRow.dataset.detail = idx;
+      detailRow.innerHTML = `<td colspan="9"><div class="trade-card">
+        <div class="trade-card-grid">
+          <div class="tc-field"><span class="tc-label">סימבול</span><span class="tc-val blue">${escapeHtml(String(t.symbol || "—"))}</span></div>
+          <div class="tc-field"><span class="tc-label">צד</span><span class="tc-val ${t.side === 'BUY' ? 'green' : 'red'}">${escapeHtml(String(t.side || "—"))}</span></div>
+          <div class="tc-field"><span class="tc-label">סוג פוזיציה</span><span class="tc-val">${escapeHtml(pt)}</span></div>
+          <div class="tc-field"><span class="tc-label">כמות</span><span class="tc-val">${t.qty ?? "—"}</span></div>
+          <div class="tc-field"><span class="tc-label">מחיר ביצוע</span><span class="tc-val">$${fmtUsd(t.ref_price_usd)}</span></div>
+          <div class="tc-field"><span class="tc-label">שווי נוטיונל</span><span class="tc-val amber">$${fmtUsd(notional)}</span></div>
+          <div class="tc-field"><span class="tc-label">סטופ לוס</span><span class="tc-val red">${t.stop ? "$" + fmtUsd(t.stop) : "—"}</span></div>
+          <div class="tc-field"><span class="tc-label">טייק פרופיט</span><span class="tc-val green">${t.target ? "$" + fmtUsd(t.target) : "—"}</span></div>
+
+          <div class="tc-section">אסטרטגיה</div>
+          <div class="tc-field"><span class="tc-label">אסטרטגיה</span><span class="tc-val purple">${escapeHtml(strat.source || "—")}</span></div>
+          <div class="tc-field"><span class="tc-label">מצב</span><span class="tc-val">${escapeHtml(strat.mode || "—")}</span></div>
+          <div class="tc-field"><span class="tc-label">תאריך סימולציה</span><span class="tc-val">${escapeHtml(String(t.sim_date ?? t.time ?? "—"))}</span></div>
+          <div class="tc-field"><span class="tc-label">מספר עסקה</span><span class="tc-val">#${t.seq ?? "—"}</span></div>
+
+          <div class="tc-section">ריסק וביצוע</div>
+          <div class="tc-field"><span class="tc-label">תקרת נוטיונל</span><span class="tc-val">$${fmtUsd(r.max_notional_per_trade_usd)}</span></div>
+          <div class="tc-field"><span class="tc-label">בטווח?</span><span class="tc-val ${r.notional_ok ? 'green' : 'red'}">${r.notional_ok ? "כן" : "חריגה"}</span></div>
+          <div class="tc-field"><span class="tc-label">סימבול ברשימה</span><span class="tc-val ${r.symbol_allowed_by_list ? 'green' : 'red'}">${r.symbol_allowed_by_list ? "כן" : "לא"}</span></div>
+          <div class="tc-field"><span class="tc-label">עסקאות לפני</span><span class="tc-val">${r.trades_today_before ?? "—"} / ${r.max_trades_per_day ?? "—"}</span></div>
+          <div class="tc-field"><span class="tc-label">תוצאת ביצוע</span><span class="tc-val ${isOk ? 'green' : 'red'}">${isOk ? "אושר ובוצע" : "נחסם"}</span></div>
+          <div class="tc-field"><span class="tc-label">ברוקר</span><span class="tc-val">${escapeHtml(String(ex.broker || "נייר"))}</span></div>
+
+          ${strat.note ? `<div class="tc-note">${escapeHtml(strat.note)}</div>` : ""}
+          ${t.message ? `<div class="tc-note">${escapeHtml(t.message)}</div>` : ""}
+        </div>
+      </div></td>`;
+
+      if (row && row.nextSibling) {
+        tbody.insertBefore(detailRow, row.nextSibling);
+      } else {
+        tbody.appendChild(detailRow);
+      }
+      detailRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    /* ── Charts ── */
+    function buildCharts(demo) {
+      document.getElementById("chart-disclaimer").textContent = demo.disclaimer || "";
+
+      destroyChart("equity");
+      charts.equity = new Chart(document.getElementById("chart-equity"), {
+        type: "line",
+        data: {
+          labels: demo.equity.labels,
+          datasets: [{
+            label: "הון",
+            data: demo.equity.values,
+            borderColor: "#5eead4",
+            backgroundColor: "rgba(94,234,212,0.1)",
+            fill: true,
+            tension: 0.25,
+            pointRadius: 0,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { maxTicksLimit: 8 } },
+            y: { ticks: { callback: v => "$" + Number(v).toLocaleString() } },
+          },
+        },
+      });
+
+      destroyChart("weights");
+      charts.weights = new Chart(document.getElementById("chart-weights"), {
+        type: "doughnut",
+        data: {
+          labels: demo.weights.labels,
+          datasets: [{
+            data: demo.weights.values,
+            backgroundColor: ["#5eead4", "#fbbf24", "#a78bfa", "#fb7185", "#38bdf8"],
+            borderWidth: 0,
+          }],
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } },
+      });
+
+      destroyChart("close");
+      charts.close = new Chart(document.getElementById("chart-close"), {
+        type: "line",
+        data: {
+          labels: demo.ohlc.map((_, i) => String(i + 1)),
+          datasets: [{
+            label: "סגירה",
+            data: demo.ohlc.map(b => b.c),
+            borderColor: "#a78bfa",
+            tension: 0.2,
+            pointRadius: 2,
+          }],
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
+      });
+
+      destroyChart("spark");
+      charts.spark = new Chart(document.getElementById("chart-spark"), {
+        type: "line",
+        data: {
+          labels: demo.sparkline.map((_, i) => i),
+          datasets: [{
+            data: demo.sparkline,
+            borderColor: "#fbbf24",
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.35,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { x: { display: false }, y: { display: false } },
+        },
+      });
+    }
+
+    /* ── Risk / Settings ── */
+    function renderRisk(cfg, demo) {
+      const u = demo?.risk_usage || {};
+      document.getElementById("risk-kpis").innerHTML = `
+        <div class="kpi"><p class="kpi-label">מקס. הפסד יומי</p><div class="kpi-val">$${cfg.risk.max_daily_loss_usd}</div></div>
+        <div class="kpi"><p class="kpi-label">מקס. נוטיונל לעסקה</p><div class="kpi-val">$${cfg.risk.max_notional_per_trade_usd}</div></div>
+        <div class="kpi"><p class="kpi-label">מקס. עסקאות ליום</p><div class="kpi-val">${cfg.risk.max_trades_per_day}</div></div>
+        <div class="kpi"><p class="kpi-label">Kill switch</p><div class="kpi-val">${cfg.risk.kill_switch ? "פעיל" : "כבוי"}</div></div>
+      `;
+
+      const syms = cfg.risk.allowed_symbols || [];
+      document.getElementById("symbols-grid").innerHTML = syms.map(s =>
+        `<span class="sym-tag">${escapeHtml(s)}</span>`
+      ).join("");
+
+      const ru = demo.risk_usage;
+      destroyChart("risk");
+      charts.risk = new Chart(document.getElementById("chart-risk"), {
+        type: "bar",
+        data: {
+          labels: ["הפסד יומי", "נוטיונל", "עסקאות"],
+          datasets: [{
+            label: "בשימוש",
+            data: [ru.used_daily_loss_usd, ru.used_notional_usd, ru.trades_today],
+            backgroundColor: "#fbbf24",
+          }, {
+            label: "תקרה",
+            data: [ru.max_daily_loss_usd, ru.max_notional_per_trade_usd, ru.max_trades_per_day],
+            backgroundColor: "rgba(94,234,212,0.35)",
+          }],
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: { x: { beginAtZero: true } },
+        },
+      });
+    }
+
+    /* ── Init ── */
+    async function loadAll() {
+      try {
+        const [cfg, demo] = await Promise.all([
+          jget("/api/config"),
+          jget("/api/demo-charts"),
+        ]);
+        _dashboardCfg = cfg;
+        _demoCharts = demo;
+        buildCharts(demo);
+        renderRisk(cfg, demo);
+      } catch (_) {}
+    }
+
+    /* ── Event listeners ── */
+    document.getElementById("btn-paper-start")?.addEventListener("click", async () => {
+      const dep = parseFloat(document.getElementById("paper-deposit")?.value || "0");
+      const lev = parseFloat(document.getElementById("paper-leverage")?.value || "2");
+      const startDate = document.getElementById("paper-start-date")?.value || null;
+      const errEl = document.getElementById("paper-error");
+      if (!Number.isFinite(dep) || dep < 100) { if (errEl) errEl.textContent = "הפקדה חייבת להיות >= 100"; return; }
+      try {
+        const body = { deposit_usd: dep, interval_sec: 2, leverage: lev };
+        if (startDate) body.start_date = startDate;
+        const d = await postPaperStart(body);
+        renderPaperPanel(d);
+        if (errEl) errEl.textContent = "";
+      } catch (e) {
+        if (errEl) errEl.textContent = "שגיאה: " + e.message;
+      }
+    });
+
+    let _ffRunning = false;
+    let _ffTimer = null;
+    let _ffEquityLabels = [];
+    let _ffEquityValues = [];
+    let _ffLiveChart = null;
+
+    function _ffShowUI(show) {
+      document.getElementById("ff-progress-wrap").style.display = show ? "" : "none";
+      document.getElementById("ff-news-ticker").style.display = show ? "" : "none";
+      document.getElementById("ff-live-chart-wrap").style.display = show ? "" : "none";
+    }
+
+    function _ffUpdateProgress(day, totalEstimate) {
+      const pct = totalEstimate > 0 ? Math.min(100, Math.round(day / totalEstimate * 100)) : 0;
+      document.getElementById("ff-progress-bar").style.width = pct + "%";
+      document.getElementById("ff-progress-pct").textContent = pct + "%";
+      document.getElementById("ff-progress-label").textContent = `הרצה מהירה — יום ${day}`;
+    }
+
+    function _ffUpdateEquityChart(label, equity) {
+      _ffEquityLabels.push(label);
+      _ffEquityValues.push(equity);
+      const canvas = document.getElementById("chart-equity-live");
+      if (!canvas) return;
+      if (!_ffLiveChart) {
+        _ffLiveChart = new Chart(canvas, {
+          type: "line",
+          data: {
+            labels: _ffEquityLabels,
+            datasets: [{
+              label: "הון ($)",
+              data: _ffEquityValues,
+              borderColor: "#6366f1",
+              backgroundColor: "rgba(99,102,241,0.08)",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 0,
+              borderWidth: 2,
+            }]
+          },
+          options: {
+            animation: false,
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { display: true, ticks: { maxTicksLimit: 12, color: "#888", font: { size: 10 } } },
+              y: { ticks: { callback: v => "$" + v.toLocaleString(), color: "#888", font: { size: 10 } } }
+            }
+          }
+        });
+      } else {
+        _ffLiveChart.update("none");
+      }
+    }
+
+    function _ffUpdateTicker(trades) {
+      if (!trades || !trades.length) return;
+      const lastT = trades[trades.length - 1];
+      const dayEl = document.getElementById("ff-ticker-day");
+      if (dayEl && lastT && lastT.sim_date) dayEl.textContent = String(lastT.sim_date);
+      const row = document.getElementById("ff-ticker-trades");
+      if (!row) return;
+      const tail = trades.slice(-24);
+      row.innerHTML = tail
+        .map((t) => {
+          const day = t.sim_date || t.date || "";
+          const px = t.ref_price_usd != null ? t.ref_price_usd : t.price;
+          const side = String(t.side || "").toUpperCase();
+          const isBuy = side === "BUY";
+          const cls = isBuy ? "ff-trade-chip buy" : "ff-trade-chip sell";
+          const txt = `${day} ${t.symbol || ""} ${side} $${px != null ? px : ""}`;
+          return `<span class="${cls}" title="${escapeHtml(txt)}">${escapeHtml(txt)}</span>`;
+        })
+        .join("");
+      row.scrollLeft = row.scrollWidth;
+    }
+
+    function stopFastForward() {
+      _ffRunning = false;
+      if (_ffTimer) { clearTimeout(_ffTimer); _ffTimer = null; }
+      const btn = document.getElementById("btn-paper-ff");
+      if (btn) { btn.disabled = false; btn.textContent = "⏩ הרצה מהירה"; }
+      document.getElementById("realtime-indicator").style.display = "none";
+      document.getElementById("ff-progress-wrap").style.display = "none";
+      document.getElementById("ff-news-ticker").style.display = "none";
+      const tr = document.getElementById("ff-ticker-trades");
+      if (tr) tr.innerHTML = "";
+      startPaperPoll();
+    }
+
+    document.getElementById("btn-paper-ff")?.addEventListener("click", async () => {
+      if (_ffRunning) { stopFastForward(); return; }
+
+      const errEl = document.getElementById("paper-error");
+      const btn = document.getElementById("btn-paper-ff");
+      const dep = parseFloat(document.getElementById("paper-deposit")?.value || "100000");
+      const lev = parseFloat(document.getElementById("paper-leverage")?.value || "2");
+      const startDate = document.getElementById("paper-start-date")?.value || null;
+
+      let status;
+      try { status = await fetchPaperStatus(); } catch (_) { status = {}; }
+
+      if (!status.active || !status.running) {
+        try {
+          const body = { deposit_usd: dep, interval_sec: 3600, leverage: lev };
+          if (startDate) body.start_date = startDate;
+          const d = await postPaperStart(body);
+          renderPaperPanel(d);
+          if (errEl) errEl.textContent = "";
+        } catch (e) {
+          if (errEl) errEl.textContent = "שגיאה: " + e.message;
+          return;
+        }
+      }
+
+      _ffRunning = true;
+      _ffEquityLabels = [];
+      _ffEquityValues = [];
+      if (_ffLiveChart) { _ffLiveChart.destroy(); _ffLiveChart = null; }
+
+      if (btn) { btn.textContent = "⏸ עצור הרצה"; }
+      document.getElementById("realtime-indicator").style.display = "";
+      _ffShowUI(true);
+      stopPaperPoll();
+      _ffRefreshNewsTicker().catch(() => {});
+      const tradesRow = document.getElementById("ff-ticker-trades");
+      if (tradesRow) tradesRow.innerHTML = "";
+
+      const startDateObj = new Date(startDate || new Date());
+      const totalDaysEstimate = Math.round((Date.now() - startDateObj.getTime()) / 86400000 * 5 / 7);
+
+      const FF_DELAY = 60;
+
+      async function ffStep() {
+        if (!_ffRunning) return;
+        try {
+          const r = await fetch("/api/paper/step", { method: "POST" });
+          const d = await r.json();
+          if (!d.ok || !d.running) {
+            renderPaperPanel(d);
+            _ffUpdateProgress(d.days_simulated || 0, d.days_simulated || 0);
+            stopFastForward();
+            return;
+          }
+          renderPaperPanel(d);
+          const day = d.days_simulated || 0;
+          _ffUpdateProgress(day, totalDaysEstimate);
+          _ffUpdateEquityChart(d.sim_date || `D${day}`, d.equity_usd || 0);
+          _ffUpdateTicker(d.trades);
+          if (btn) btn.textContent = `⏸ יום ${day}`;
+          _ffTimer = setTimeout(ffStep, FF_DELAY);
+        } catch (e) {
+          stopFastForward();
+        }
+      }
+      ffStep();
+    });
+
+    document.getElementById("btn-paper-stop")?.addEventListener("click", async () => {
+      stopRealtimeSim();
+      stopFastForward();
+      try {
+        await postPaperStop();
+        await refreshPaper();
+      } catch (e) {
+        const errEl = document.getElementById("paper-error");
+        if (errEl) errEl.textContent = "שגיאה: " + e.message;
+      }
+    });
+
+    document.getElementById("paper-trades-body")?.addEventListener("click", (ev) => {
+      const tr = ev.target.closest("tr[data-idx]");
+      if (!tr) return;
+      toggleTradeCard(parseInt(tr.dataset.idx, 10));
+    });
+
+    document.getElementById("paper-trades-body")?.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const tr = ev.target.closest("tr[data-idx]");
+      if (!tr) return;
+      ev.preventDefault();
+      toggleTradeCard(parseInt(tr.dataset.idx, 10));
+    });
+
+    /* ── Keyboard nav for tabs ── */
+    document.querySelector(".tab-nav")?.addEventListener("keydown", (ev) => {
+      const tabs = [...document.querySelectorAll(".tab-btn")];
+      const cur = tabs.findIndex(t => t === document.activeElement);
+      if (cur < 0) return;
+      let next = -1;
+      if (ev.key === "ArrowLeft") next = (cur + 1) % tabs.length;
+      else if (ev.key === "ArrowRight") next = (cur - 1 + tabs.length) % tabs.length;
+      if (next >= 0) { ev.preventDefault(); tabs[next].focus(); tabs[next].click(); }
+    });
+
+    /* ═══════ Grok chat logic ═══════ */
+
+    async function sendGrokMessage() {
+      const input = document.getElementById("grok-input");
+      const btn = document.getElementById("grok-send-btn");
+      const msg = (input.value || "").trim();
+      if (!msg) return;
+
+      appendGrokMsg("user", msg);
+      input.value = "";
+      btn.disabled = true;
+      btn.textContent = "...";
+
+      try {
+        const r = await fetch("/api/grok/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+          appendGrokMsg("assistant", d.reply);
+        } else {
+          appendGrokMsg("error", d.error || "שגיאה לא ידועה");
+        }
+      } catch (e) {
+        appendGrokMsg("error", e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "שלח";
+        input.focus();
+      }
+    }
+
+    function appendGrokMsg(role, text) {
+      const container = document.getElementById("grok-messages");
+      const div = document.createElement("div");
+      div.className = "grok-msg " + role;
+      if (role === "user") {
+        div.innerHTML = `<div class="grok-label">אתה</div><div>${_esc(text)}</div>`;
+      } else if (role === "assistant") {
+        div.innerHTML = `<div class="grok-label">Grok AI</div><div>${_formatGrokReply(text)}</div>`;
+      } else {
+        div.innerHTML = `<div>${_esc(text)}</div>`;
+      }
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function _formatGrokReply(text) {
+      let s = _esc(text);
+      s = s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+      s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
+      s = s.replace(/^### (.+)$/gm, '<div style="font-weight:700;color:var(--accent);margin:0.4rem 0 0.2rem;">$1</div>');
+      s = s.replace(/^## (.+)$/gm, '<div style="font-weight:700;color:var(--accent);font-size:1.05rem;margin:0.5rem 0 0.2rem;">$1</div>');
+      s = s.replace(/^- (.+)$/gm, '• $1');
+      return s;
+    }
+
+    async function clearGrokChat() {
+      try { await fetch("/api/grok/clear", { method: "POST" }); } catch (_) {}
+      const container = document.getElementById("grok-messages");
+      container.innerHTML = `<div class="grok-msg assistant">
+        <div class="grok-label">Grok AI</div>
+        <div>שלום! אני Grok, יועץ AI פיננסי. אני מכיר את הפורטפוליו שלך ואת מצב הסימולציה. שאל אותי כל שאלה.</div>
+      </div>`;
+    }
+
+    document.getElementById("grok-input")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendGrokMessage(); }
+    });
+
+    /* ═══════ Real-time simulation logic ═══════ */
+
+    let _rtNewsTimer = null;
+    let _rtTickerClockTimer = null;
+    let _rtTickerHeadlinesCache = [];
+    let _ffNewsHeadlinesCache = [];
+
+    function _resetTickerScroll(scrollEl) {
+      if (scrollEl) scrollEl.scrollLeft = 0;
+    }
+
+    function _fillNewsTickerRow(d, trackEl, scrollEl, cacheArray, tickerKey) {
+      if (!trackEl) return;
+      const perSym = d.per_symbol || {};
+      const headlines = (d.all_headlines || []).slice(0, 40);
+      if (!headlines.length) {
+        cacheArray.length = 0;
+        trackEl.innerHTML = '<span class="ticker-hint">אין כותרות זמינות כרגע</span>';
+        _resetTickerScroll(scrollEl);
+        return;
+      }
+      const enriched = headlines.map((h) => _enrichTickerHeadline(h, perSym));
+      cacheArray.length = 0;
+      enriched.forEach((x) => cacheArray.push(x));
+      const sep = '<span class="ticker-hint" aria-hidden="true"> · </span>';
+      const buttons = cacheArray
+        .map((h, idx) => {
+          const timeBadge = _formatTickerTimeBadge(h.pubDate);
+          const sym = h.symbol || "";
+          const disp = (h.title_he || h.title || "").trim() || "—";
+          const dispShort = disp.length > 80 ? disp.slice(0, 80) + "…" : disp;
+          const symHtml = sym ? `<span class="ticker-item-sym">${escapeHtml(sym)}</span>` : "";
+          const label = disp.slice(0, 160).replace(/"/g, "'");
+          return (
+            `<button type="button" class="ticker-item-news" data-ticker="${tickerKey}" data-idx="${idx}" aria-label="פרטים וקישור: ${escapeHtml(label)}">` +
+            `<span class="ticker-item-time">${escapeHtml(timeBadge)}</span>` +
+            symHtml +
+            `<span class="ticker-item-title">${escapeHtml(dispShort)}</span>` +
+            `</button>`
+          );
+        })
+        .join(sep);
+      trackEl.innerHTML =
+        buttons +
+        `<span class="ticker-hint" style="margin-inline-start:0.5rem;">גלול לצד ←</span>`;
+      _resetTickerScroll(scrollEl);
+    }
+
+    function _formatTickerTimeBadge(pub) {
+      if (!pub) return "— · —:—";
+      try {
+        const d = new Date(pub);
+        if (isNaN(d.getTime())) return "— · —:—";
+        const datePart = d.toLocaleDateString("he-IL", {
+          timeZone: "Asia/Jerusalem",
+          day: "2-digit",
+          month: "2-digit",
+          year: "2-digit",
+        });
+        const timePart = d.toLocaleTimeString("he-IL", {
+          timeZone: "Asia/Jerusalem",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        });
+        return datePart + " · " + timePart;
+      } catch {
+        return "— · —:—";
+      }
+    }
+
+    function _enrichTickerHeadline(h, perSym) {
+      const out = Object.assign({}, h);
+      const t = (out.title || "").trim();
+      const link = (out.link || "").trim();
+      if (!perSym || !t) return out;
+      for (const sym of Object.keys(perSym)) {
+        const info = perSym[sym];
+        const heads = info.headlines || [];
+        const heList = info.headlines_he || [];
+        for (let i = 0; i < heads.length; i++) {
+          const row = heads[i];
+          const rt = (row.title || "").trim();
+          const rl = (row.link || "").trim();
+          const linkMatch = !link || !rl || rl === link;
+          if (rt === t && linkMatch) {
+            out.symbol = out.symbol || sym;
+            if (heList[i]) out.title_he = out.title_he || String(heList[i]);
+            if (info.summary_he && !out.summary_he) out.summary_he = String(info.summary_he);
+            if (info.reasoning_he && !out.reasoning_he) out.reasoning_he = String(info.reasoning_he);
+            return out;
+          }
+        }
+      }
+      return out;
+    }
+
+    function _rtUpdateTickerClock() {
+      const el = document.getElementById("rt-ticker-clock");
+      if (!el) return;
+      const now = new Date();
+      el.textContent = now.toLocaleTimeString("he-IL", {
+        timeZone: "Asia/Jerusalem",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+    }
+
+    async function _rtRefreshNews() {
+      const track = document.getElementById("rt-ticker-track");
+      const scroll = document.getElementById("rt-ticker-scroll");
+      const fetchedEl = document.getElementById("rt-ticker-fetched");
+      if (!track) return;
+      try {
+        const r = await fetch("/api/news/details");
+        const d = await r.json();
+        const now = new Date();
+        if (fetchedEl) {
+          fetchedEl.textContent =
+            "עודכן " +
+            now.toLocaleTimeString("he-IL", {
+              timeZone: "Asia/Jerusalem",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              hour12: false,
+            });
+        }
+        if (!d.ok) {
+          track.innerHTML = `<span class="ticker-error">${escapeHtml(d.error || "שגיאה בטעינת חדשות")}</span>`;
+          _rtTickerHeadlinesCache.length = 0;
+          _resetTickerScroll(scroll);
+          return;
+        }
+        _fillNewsTickerRow(d, track, scroll, _rtTickerHeadlinesCache, "rt");
+      } catch (e) {
+        track.innerHTML = `<span class="ticker-error">${escapeHtml(e.message || "שגיאת רשת")}</span>`;
+        _rtTickerHeadlinesCache.length = 0;
+        _resetTickerScroll(scroll);
+      }
+    }
+
+    async function _ffRefreshNewsTicker() {
+      const track = document.getElementById("ff-ticker-track-news");
+      const scroll = document.getElementById("ff-ticker-scroll");
+      if (!track) return;
+      try {
+        const r = await fetch("/api/news/details");
+        const d = await r.json();
+        if (!d.ok) {
+          track.innerHTML = `<span class="ticker-hint">${escapeHtml(d.error || "חדשות לא נטענו")}</span>`;
+          _ffNewsHeadlinesCache.length = 0;
+          _resetTickerScroll(scroll);
+          return;
+        }
+        _fillNewsTickerRow(d, track, scroll, _ffNewsHeadlinesCache, "ff");
+      } catch (e) {
+        track.innerHTML = `<span class="ticker-hint">${escapeHtml(e.message || "רשת")}</span>`;
+        _ffNewsHeadlinesCache.length = 0;
+        _resetTickerScroll(scroll);
+      }
+    }
+
+    async function startRealtimeSim() {
+      const dep = parseFloat(document.getElementById("paper-deposit")?.value || "100000");
+      const lev = parseFloat(document.getElementById("paper-leverage")?.value || "2");
+      const errEl = document.getElementById("paper-error");
+      const speed = parseFloat(document.getElementById("paper-interval")?.value || "2");
+
+      let status;
+      try {
+        status = await fetchPaperStatus();
+      } catch (_) { status = {}; }
+
+      if (!status.active || !status.running) {
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          const body = { deposit_usd: dep, interval_sec: 3600, leverage: lev, start_date: today };
+          const d = await postPaperStart(body);
+          renderPaperPanel(d);
+          if (errEl) errEl.textContent = "";
+        } catch (e) {
+          if (errEl) errEl.textContent = "שגיאה: " + e.message;
+          return;
+        }
+      }
+
+      _realtimeRunning = true;
+      document.getElementById("realtime-indicator").style.display = "";
+      document.getElementById("btn-paper-realtime").textContent = "⏸ עצור חי";
+      document.getElementById("rt-news-ticker").style.display = "";
+
+      stopPaperPoll();
+      _rtRefreshNews().catch(() => {});
+      _rtNewsTimer = setInterval(() => {
+        _rtRefreshNews().catch(() => {});
+      }, 120000);
+
+      _realtimeTimer = setInterval(async () => {
+        if (!_realtimeRunning) return;
+        try {
+          const r = await fetch("/api/paper/step", { method: "POST" });
+          const d = await r.json();
+          if (!d.ok || !d.running) {
+            stopRealtimeSim();
+            renderPaperPanel(d);
+            return;
+          }
+          renderPaperPanel(d);
+        } catch (e) {
+          stopRealtimeSim();
+        }
+      }, speed * 1000);
+    }
+
+    function stopRealtimeSim() {
+      _realtimeRunning = false;
+      if (_realtimeTimer) { clearInterval(_realtimeTimer); _realtimeTimer = null; }
+      if (_rtNewsTimer) { clearInterval(_rtNewsTimer); _rtNewsTimer = null; }
+      document.getElementById("realtime-indicator").style.display = "none";
+      document.getElementById("btn-paper-realtime").textContent = "▶ זמן אמת";
+      startPaperPoll();
+    }
+
+    document.getElementById("btn-paper-realtime")?.addEventListener("click", () => {
+      if (_realtimeRunning) {
+        stopRealtimeSim();
+      } else {
+        startRealtimeSim();
+      }
+    });
+
+    /* ═══════ News panel logic ═══════ */
+    let _newsData = null;
+
+    async function loadNewsDetails() {
+      const btn = document.getElementById("btn-load-news");
+      const status = document.getElementById("news-status");
+      btn.disabled = true;
+      status.textContent = "טוען כותרות RSS וסנטימנט Grok...";
+      status.style.color = "var(--muted)";
+      try {
+        const r = await fetch("/api/news/details");
+        const d = await r.json();
+        if (!d.ok) { status.textContent = "שגיאה: " + (d.error || "unknown"); status.style.color = "var(--danger)"; return; }
+        _newsData = d;
+        renderNewsPanel(d);
+        status.textContent = `נטענו ${d.total_headlines} כותרות`;
+        status.style.color = "var(--ok)";
+      } catch(e) {
+        status.textContent = "שגיאה: " + e.message;
+        status.style.color = "var(--danger)";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderNewsPanel(d) {
+      document.getElementById("news-summary").style.display = "";
+      document.getElementById("news-filter-bar").style.display = "";
+      document.getElementById("news-all-headlines").style.display = "";
+
+      document.getElementById("news-total-count").textContent = d.total_headlines;
+      document.getElementById("news-grok-status").innerHTML = d.grok_enabled
+        ? '<span style="color:var(--ok)">פעיל</span>'
+        : '<span style="color:var(--danger)">חסר GROK_API_KEY</span>';
+
+      const perSym = d.per_symbol || {};
+      const syms = Object.keys(perSym);
+      const withNews = syms.filter(s => perSym[s].headlines.length > 0);
+      document.getElementById("news-sym-count").textContent = `${withNews.length} / ${syms.length}`;
+
+      const select = document.getElementById("news-sym-filter");
+      select.innerHTML = '<option value="__all__">הכל</option>';
+      syms.forEach(s => {
+        const opt = document.createElement("option");
+        opt.value = s;
+        const n = perSym[s].headlines.length;
+        const score = perSym[s].sentiment;
+        opt.textContent = `${s} (${n} כותרות, ${score >= 0 ? "+" : ""}${score.toFixed(2)})`;
+        select.appendChild(opt);
+      });
+
+      renderSymbolCards(syms, perSym);
+      renderAllHeadlines(d.all_headlines || []);
+    }
+
+    function renderSymbolCards(syms, perSym) {
+      const container = document.getElementById("news-panels-container");
+      const filter = document.getElementById("news-sym-filter")?.value || "__all__";
+      const filtered = filter === "__all__" ? syms : syms.filter(s => s === filter);
+
+      const sorted = [...filtered].sort((a, b) => {
+        const sa = Math.abs(perSym[a].sentiment), sb = Math.abs(perSym[b].sentiment);
+        const na = perSym[a].headlines.length, nb = perSym[b].headlines.length;
+        return nb - na || sb - sa;
+      });
+
+      container.innerHTML = sorted.map(sym => {
+        const info = perSym[sym];
+        const score = info.sentiment;
+        const confidence = info.confidence || 0;
+        const cls = score > 0.15 ? "positive" : score < -0.15 ? "negative" : "neutral";
+        const icon = score > 0.15 ? "🟢" : score < -0.15 ? "🔴" : "⚪";
+        const sentLabel = score > 0.3 ? "חיובי חזק" : score > 0.15 ? "חיובי" : score < -0.3 ? "שלילי חזק" : score < -0.15 ? "שלילי" : "ניטרלי";
+        const headlines = info.headlines || [];
+        const headlinesHe = info.headlines_he || [];
+        const summaryHe = info.summary_he || "";
+        const reasoningHe = info.reasoning_he || "";
+        const factors = info.factors || [];
+
+        let tradingEffect = "";
+        if (score > 0.3) tradingEffect = '<span style="color:var(--ok);">מגביר מינוף ×1.3 בקנייה | חוסם שורט</span>';
+        else if (score < -0.3) tradingEffect = '<span style="color:var(--danger);">חוסם קנייה | מגביר מינוף ×1.3 בשורט</span>';
+        else tradingEffect = '<span style="color:var(--muted);">ללא השפעה — סנטימנט בטווח ניטרלי</span>';
+
+        return `<div class="news-sym-card" data-sym="${sym}">
+          <div class="news-sym-header" onclick="this.parentElement.classList.toggle('open')">
+            <span class="news-sym-ticker">${sym}</span>
+            <span class="news-sym-score ${cls}">${icon} ${sentLabel} (${score >= 0 ? "+" : ""}${score.toFixed(2)})</span>
+            <span class="news-headline-count">${headlines.length} כותרות</span>
+            <span class="news-chevron">▼</span>
+          </div>
+          <div class="news-headlines-body">
+
+            ${summaryHe ? `<div style="padding:0.6rem;background:rgba(0,0,0,0.25);border-radius:8px;margin-bottom:0.8rem;">
+              <div style="font-weight:700;color:var(--accent);font-size:0.8rem;margin-bottom:0.3rem;">סיכום Grok</div>
+              <div style="font-size:0.88rem;">${_esc(summaryHe)}</div>
+              ${reasoningHe ? `<div style="margin-top:0.4rem;font-size:0.82rem;color:var(--muted);border-top:1px solid var(--line);padding-top:0.4rem;">
+                <b>נימוק:</b> ${_esc(reasoningHe)}
+              </div>` : ""}
+              ${factors.length ? `<div style="margin-top:0.4rem;font-size:0.8rem;">
+                <b style="color:var(--accent2);">גורמים מרכזיים:</b>
+                <ul style="margin:0.2rem 0 0 1.2rem;padding:0;">${factors.map(f => `<li>${_esc(f)}</li>`).join("")}</ul>
+              </div>` : ""}
+              <div style="margin-top:0.4rem;display:flex;gap:1rem;font-size:0.78rem;">
+                <span>ביטחון: <b>${(confidence * 100).toFixed(0)}%</b></span>
+                <span>השפעה על מסחר: ${tradingEffect}</span>
+              </div>
+            </div>` : ""}
+
+            <div style="font-weight:600;font-size:0.8rem;color:var(--accent);margin-bottom:0.3rem;">כותרות${headlinesHe.length ? " (בעברית)" : ""}:</div>
+            ${headlines.length === 0
+              ? '<div class="news-no-match">אין כותרות תואמות לסימבול זה</div>'
+              : headlines.map((h, i) => {
+                  const heTitle = headlinesHe[i] || "";
+                  const src = _extractSource(h.source || "");
+                  const date = h.pubDate ? _formatPubDate(h.pubDate) : "";
+                  return `<div class="news-headline-item" style="flex-direction:column;gap:0.15rem;">
+                    <div style="display:flex;gap:0.5rem;align-items:baseline;">
+                      ${heTitle
+                        ? `<span class="news-h-title" style="font-weight:600;">${h.link ? '<a href="'+h.link+'" target="_blank" rel="noopener">'+_esc(heTitle)+'</a>' : _esc(heTitle)}</span>`
+                        : `<span class="news-h-title">${h.link ? '<a href="'+h.link+'" target="_blank" rel="noopener">'+_esc(h.title)+'</a>' : _esc(h.title)}</span>`
+                      }
+                      <span class="news-h-date">${date}</span>
+                      <span class="news-h-source">${_esc(src)}</span>
+                    </div>
+                    ${heTitle ? `<div style="font-size:0.76rem;color:var(--muted);padding-right:0.5rem;">${_esc(h.title)}</div>` : ""}
+                  </div>`;
+                }).join("")
+            }
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderAllHeadlines(headlines) {
+      const container = document.getElementById("news-all-list");
+      if (!headlines.length) {
+        container.innerHTML = '<div class="news-no-match">אין כותרות</div>';
+        return;
+      }
+      container.innerHTML = `<table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+        <thead><tr style="position:sticky;top:0;background:var(--bg1);z-index:2;">
+          <th style="text-align:right;padding:0.4rem;">כותרת</th>
+          <th style="text-align:right;padding:0.4rem;white-space:nowrap;">תאריך</th>
+          <th style="text-align:right;padding:0.4rem;">מקור</th>
+        </tr></thead>
+        <tbody>${headlines.map(h => {
+          const src = _extractSource(h.source || "");
+          const date = h.pubDate ? _formatPubDate(h.pubDate) : "";
+          const link = h.link ? `<a href="${h.link}" target="_blank" rel="noopener" style="color:var(--text);text-decoration:none;">${_esc(h.title)}</a>` : _esc(h.title);
+          return `<tr style="border-bottom:1px solid rgba(120,160,220,0.06);">
+            <td style="padding:0.35rem 0.4rem;">${link}</td>
+            <td style="padding:0.35rem 0.4rem;white-space:nowrap;color:var(--muted);font-size:0.76rem;">${date}</td>
+            <td style="padding:0.35rem 0.4rem;color:var(--muted);font-size:0.76rem;">${_esc(src)}</td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table>`;
+    }
+
+    function filterNewsSymbol() {
+      if (!_newsData) return;
+      const perSym = _newsData.per_symbol || {};
+      renderSymbolCards(Object.keys(perSym), perSym);
+    }
+
+    function _extractSource(url) {
+      try { return new URL(url).hostname.replace("www.", "").replace("feeds.", ""); }
+      catch { return url.slice(0, 30); }
+    }
+
+    function _formatPubDate(s) {
+      try {
+        const d = new Date(s);
+        if (isNaN(d)) return s;
+        return d.toLocaleDateString("he-IL", { day:"numeric", month:"short" }) + " " +
+               d.toLocaleTimeString("he-IL", { hour:"2-digit", minute:"2-digit" });
+      } catch { return s; }
+    }
+
+    function openRtTickerDetail(h) {
+      const dlg = document.getElementById("ticker-detail-dlg");
+      if (!dlg || !h) return;
+      const whenEl = document.getElementById("ticker-dlg-when");
+      const symEl = document.getElementById("ticker-dlg-sym");
+      const heEl = document.getElementById("ticker-dlg-title-he");
+      const srcEl = document.getElementById("ticker-dlg-title-src");
+      const sourceHost = document.getElementById("ticker-dlg-source");
+      const grokWrap = document.getElementById("ticker-dlg-grok-wrap");
+      const summHe = document.getElementById("ticker-dlg-summary-he");
+      const reasonWrap = document.getElementById("ticker-dlg-reason-wrap");
+      const reasonHe = document.getElementById("ticker-dlg-reason-he");
+      const a = document.getElementById("ticker-dlg-link");
+
+      if (whenEl) {
+        if (h.pubDate) {
+          const d = new Date(h.pubDate);
+          whenEl.textContent = isNaN(d.getTime())
+            ? String(h.pubDate)
+            : d.toLocaleString("he-IL", {
+                timeZone: "Asia/Jerusalem",
+                weekday: "short",
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+              });
+        } else {
+          whenEl.textContent = "לא צוין";
+        }
+      }
+      if (symEl) symEl.textContent = h.symbol || "—";
+      if (heEl) heEl.textContent = (h.title_he && String(h.title_he).trim()) || "—";
+      if (srcEl) srcEl.textContent = (h.title && String(h.title).trim()) || "—";
+      if (sourceHost) sourceHost.textContent = _extractSource(h.source || h.link || "") || "—";
+
+      if (h.summary_he && String(h.summary_he).trim()) {
+        if (grokWrap) grokWrap.style.display = "";
+        if (summHe) summHe.textContent = String(h.summary_he);
+      } else {
+        if (grokWrap) grokWrap.style.display = "none";
+      }
+      if (h.reasoning_he && String(h.reasoning_he).trim()) {
+        if (reasonWrap) reasonWrap.style.display = "";
+        if (reasonHe) reasonHe.textContent = String(h.reasoning_he);
+      } else {
+        if (reasonWrap) reasonWrap.style.display = "none";
+      }
+
+      if (a) {
+        if (h.link && String(h.link).trim()) {
+          a.href = h.link;
+          a.hidden = false;
+        } else {
+          a.href = "#";
+          a.hidden = true;
+        }
+      }
+      dlg.showModal();
+    }
+
+    document.getElementById("ticker-dlg-close-btn")?.addEventListener("click", () => {
+      document.getElementById("ticker-detail-dlg")?.close();
+    });
+    document.getElementById("ticker-detail-dlg")?.addEventListener("click", (e) => {
+      const dlg = document.getElementById("ticker-detail-dlg");
+      if (e.target === dlg) dlg.close();
+    });
+
+    document.getElementById("sec-simulation")?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".ticker-item-news");
+      if (!btn) return;
+      e.preventDefault();
+      const which = btn.getAttribute("data-ticker") || "rt";
+      const idx = parseInt(btn.getAttribute("data-idx"), 10);
+      const cache = which === "ff" ? _ffNewsHeadlinesCache : _rtTickerHeadlinesCache;
+      if (!Number.isFinite(idx) || idx < 0 || idx >= cache.length) return;
+      openRtTickerDetail(cache[idx]);
+    });
+
+    document.getElementById("rt-ticker-refresh-btn")?.addEventListener("click", () => {
+      _rtRefreshNews().catch(() => {});
+    });
+    document.getElementById("ff-ticker-refresh-btn")?.addEventListener("click", () => {
+      _ffRefreshNewsTicker().catch(() => {});
+    });
+
+    function _esc(s) {
+      const div = document.createElement("div");
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    /* ═══════ News headlines floating box (ברירת מחדל: מזער) ═══════ */
+    let _nlbVisible = false;
+    let _nlbTimer = null;
+
+    document.getElementById("nlb-close")?.addEventListener("click", () => {
+      try {
+        sessionStorage.setItem("aibroker_nlb_hide", "1");
+      } catch (_) {}
+      document.getElementById("news-live-box").style.display = "none";
+    });
+    document.getElementById("nlb-minimize")?.addEventListener("click", () => {
+      const body = document.getElementById("nlb-body");
+      const btn = document.getElementById("nlb-minimize");
+      _nlbVisible = !_nlbVisible;
+      if (body) body.style.display = _nlbVisible ? "" : "none";
+      if (btn) btn.textContent = _nlbVisible ? "—" : "+";
+      if (btn) btn.title = _nlbVisible ? "מזער" : "הרחב";
+    });
+
+    async function refreshNewsBox() {
+      try {
+        const r = await fetch("/api/news/details");
+        const d = await r.json();
+        if (!d.ok) return;
+        const box = document.getElementById("news-live-box");
+        const body = document.getElementById("nlb-body");
+        if (!box || !body) return;
+
+        const perSym = d.per_symbol || {};
+        const syms = Object.keys(perSym);
+        let items = [];
+        for (const sym of syms) {
+          const info = perSym[sym];
+          const headlines = info.headlines_he || info.headlines || [];
+          const score = info.sentiment || 0;
+          const scoreClass = score > 0.15 ? "pos" : score < -0.15 ? "neg" : "neu";
+          const scoreIcon = score > 0.15 ? "🟢" : score < -0.15 ? "🔴" : "⚪";
+          const scoreTxt = score !== 0 ? ` ${scoreIcon} ${score >= 0 ? "+" : ""}${score.toFixed(2)}` : "";
+          for (const h of headlines.slice(0, 3)) {
+            const title = typeof h === "string" ? h : (h.title_he || h.title || "");
+            if (!title) continue;
+            items.push({ sym, title, score, scoreClass, scoreTxt, date: h.pubDate || "" });
+          }
+        }
+
+        const allH = d.all_headlines || [];
+        for (const h of allH.slice(0, 20)) {
+          const already = items.some(i => i.title === h.title);
+          if (!already) {
+            items.push({ sym: "", title: h.title || "", score: 0, scoreClass: "neu", scoreTxt: "", date: h.pubDate || "" });
+          }
+        }
+
+        items = items.slice(0, 30);
+        document.getElementById("nlb-count").textContent = items.length;
+        const nlbRf = document.getElementById("nlb-refresh-time");
+        if (nlbRf) {
+          nlbRf.textContent =
+            "נטען " +
+            new Date().toLocaleTimeString("he-IL", {
+              timeZone: "Asia/Jerusalem",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              hour12: false,
+            });
+        }
+
+        body.innerHTML = items.length
+          ? items.map(i => {
+              const time = i.date ? _formatPubDate(i.date) : "";
+              return `<div class="nlb-item">
+                ${i.sym ? `<span class="nlb-sym">${_esc(i.sym)}</span>` : ""}
+                ${i.scoreTxt ? `<span class="nlb-score ${i.scoreClass}">${i.scoreTxt}</span>` : ""}
+                <span class="nlb-title">${_esc(i.title)}</span>
+                ${time ? `<span class="nlb-time">${time}</span>` : ""}
+              </div>`;
+            }).join("")
+          : '<div class="nlb-item" style="color:var(--muted);">אין כותרות כרגע</div>';
+
+        let hidden = false;
+        try {
+          hidden = sessionStorage.getItem("aibroker_nlb_hide") === "1";
+        } catch (_) {}
+        if (!hidden) box.style.display = "";
+      } catch (_) {}
+    }
+
+    function startNewsBoxPoll() {
+      refreshNewsBox();
+      if (!_nlbTimer) _nlbTimer = setInterval(refreshNewsBox, 90000);
+    }
+    function stopNewsBoxPoll() {
+      if (_nlbTimer) { clearInterval(_nlbTimer); _nlbTimer = null; }
+    }
+
+    /* ═══════ Trading tab logic ═══════ */
+    let _tradingConnected = false;
+    let _tradingClockTimer = null;
+
+    function _updateTradingClock() {
+      const now = new Date();
+      const ilTime = now.toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const nyTime = now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+      const nyHour = parseInt(now.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false }));
+      const nyMin = now.getMinutes();
+      const nyDay = now.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short" });
+      const isWeekend = ["Sat", "Sun"].includes(nyDay);
+      const marketOpen = !isWeekend && ((nyHour === 9 && nyMin >= 30) || (nyHour >= 10 && nyHour < 16));
+      const el = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+      el("trd-clock-il", ilTime);
+      el("trd-clock-ny", nyTime);
+      const statusEl = document.getElementById("trd-market-status");
+      if (statusEl) {
+        if (marketOpen) { statusEl.textContent = "🟢 שוק פתוח"; statusEl.style.color = "#4ade80"; }
+        else if (!isWeekend && nyHour >= 4 && (nyHour < 9 || (nyHour === 9 && nyMin < 30))) { statusEl.textContent = "🟡 לפני פתיחה"; statusEl.style.color = "#fbbf24"; }
+        else if (!isWeekend && nyHour >= 16 && nyHour < 20) { statusEl.textContent = "🟠 מסחר מאוחר"; statusEl.style.color = "#fb923c"; }
+        else { statusEl.textContent = "🔴 שוק סגור"; statusEl.style.color = "#fb7185"; }
+      }
+    }
+
+    async function connectBroker() {
+      const errEl = document.getElementById("trading-broker-error");
+      const apiKey = document.getElementById("trading-api-key").value.trim();
+      const secretKey = document.getElementById("trading-secret-key").value.trim();
+      errEl.textContent = "";
+
+      try {
+        const r = await fetch("/api/alpaca/account");
+        const d = await r.json();
+        if (d.ok) {
+          _tradingConnected = true;
+          document.getElementById("trading-conn-status").textContent = "● מחובר";
+          document.getElementById("trading-conn-status").style.background = "rgba(74,222,128,0.15)";
+          document.getElementById("trading-conn-status").style.color = "var(--ok)";
+          document.getElementById("trading-account-info").style.display = "";
+          document.getElementById("btn-trading-start").disabled = false;
+          document.getElementById("btn-trading-connect").style.display = "none";
+          document.getElementById("btn-trading-disconnect").style.display = "";
+
+          const s = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+          s("trd-acct-id", d.account_number || d.id || "—");
+          s("trd-equity", "$" + fmtUsd(d.equity));
+          s("trd-cash", "$" + fmtUsd(d.cash));
+          s("trd-bp", "$" + fmtUsd(d.buying_power));
+          s("trd-pnl", (d.pnl >= 0 ? "+" : "") + "$" + fmtUsd(d.pnl || 0));
+          s("trd-status", d.status || "active");
+        } else {
+          errEl.textContent = d.error || "שגיאת חיבור";
+        }
+      } catch (e) {
+        errEl.textContent = "שגיאה: " + e.message;
+      }
+    }
+
+    function disconnectBroker() {
+      _tradingConnected = false;
+      document.getElementById("trading-conn-status").textContent = "● לא מחובר";
+      document.getElementById("trading-conn-status").style.background = "rgba(251,113,133,0.15)";
+      document.getElementById("trading-conn-status").style.color = "var(--danger)";
+      document.getElementById("trading-account-info").style.display = "none";
+      document.getElementById("btn-trading-start").disabled = true;
+      document.getElementById("btn-trading-connect").style.display = "";
+      document.getElementById("btn-trading-disconnect").style.display = "none";
+    }
+
+    function startLiveTrading() {
+      if (!_tradingConnected) return;
+      document.getElementById("trd-kpi-status").textContent = "⚡ פעיל";
+      document.getElementById("trd-kpi-status").style.color = "var(--ok)";
+      document.getElementById("trd-kpi-date").textContent = new Date().toLocaleDateString("he-IL");
+      document.getElementById("trading-live-indicator").style.display = "";
+      document.getElementById("btn-trading-start").style.display = "none";
+      document.getElementById("btn-trading-stop").style.display = "";
+    }
+
+    function stopLiveTrading() {
+      document.getElementById("trd-kpi-status").textContent = "עצר";
+      document.getElementById("trd-kpi-status").style.color = "var(--muted)";
+      document.getElementById("trading-live-indicator").style.display = "none";
+      document.getElementById("btn-trading-start").style.display = "";
+      document.getElementById("btn-trading-stop").style.display = "none";
+    }
+
+    async function sendTradingGrok() {
+      const input = document.getElementById("trd-grok-input");
+      const msg = (input.value || "").trim();
+      if (!msg) return;
+      const container = document.getElementById("trd-grok-messages");
+      const userDiv = document.createElement("div");
+      userDiv.className = "grok-msg user";
+      userDiv.innerHTML = `<div class="grok-label">אתה</div><div>${_esc(msg)}</div>`;
+      container.appendChild(userDiv);
+      input.value = "";
+      container.scrollTop = container.scrollHeight;
+
+      try {
+        const r = await fetch("/api/grok/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const d = await r.json();
+        const reply = document.createElement("div");
+        reply.className = "grok-msg assistant";
+        reply.innerHTML = `<div class="grok-label">Grok AI</div><div>${_esc(d.ok ? d.reply : (d.error || "שגיאה"))}</div>`;
+        container.appendChild(reply);
+        container.scrollTop = container.scrollHeight;
+      } catch (e) {
+        const errDiv = document.createElement("div");
+        errDiv.className = "grok-msg error";
+        errDiv.textContent = e.message;
+        container.appendChild(errDiv);
+      }
+    }
+    document.getElementById("trd-grok-input")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendTradingGrok();
+    });
+
+    /* ── Boot ── */
+    startPaperPoll();
+    loadAll();
+    startNewsBoxPoll();
+    _tradingClockTimer = setInterval(_updateTradingClock, 1000);
+    _updateTradingClock();
+  </script>
+</body>
+</html>

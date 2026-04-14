@@ -1,0 +1,77 @@
+# פרופיל: Alpaca Paper — חשבון דמו אמיתי עם מחירי שוק חיים
+# נדרש: ALPACA_API_KEY + ALPACA_SECRET_KEY ב-.env
+profile_name: alpaca_paper
+
+broker: alpaca
+account_mode: paper
+
+execution:
+  dry_run: false
+
+grok:
+  enabled: false
+  role: "off"
+  orders:
+    approval: manual
+  chat:
+    enabled: false
+    ui: cli
+    context:
+      - profile
+      - positions
+      - orders
+      - signals
+      - news_digest
+      - risk
+      - logs_tail
+
+strategy:
+  mode: rules
+
+signals:
+  colmex: "off"
+
+notifications:
+  channel: "none"
+
+risk:
+  max_daily_loss_usd: 3000.0
+  max_notional_per_trade_usd: 5000.0
+  max_trades_per_day: 5000
+  kill_switch: false
+  allowed_symbols:
+    - SPY
+    - QQQ
+    - AAPL
+    - MSFT
+    - NVDA
+    - GOOGL
+    - AMZN
+    - META
+    - TSLA
+    - BRK.B
+    - JPM
+    - V
+    - JNJ
+    - UNH
+    - WMT
+    - PG
+    - MA
+    - HD
+    - DIS
+    - NFLX
+    - PYPL
+    - AMD
+    - INTC
+    - CRM
+    - COST
+    - PEP
+    - KO
+    - ABBV
+    - MRK
+    - BA
+
+ibkr:
+  host: 127.0.0.1
+  port: 7497
+  client_id: 1

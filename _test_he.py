@@ -1,0 +1,15 @@
+import sys, urllib.request, json
+sys.stdout.reconfigure(encoding='utf-8')
+r = urllib.request.urlopen('http://127.0.0.1:8766/api/news/details', timeout=120)
+d = json.loads(r.read())
+print("ok:", d.get("ok"), "grok:", d.get("grok_enabled"))
+for sym, info in list(d.get("per_symbol", {}).items())[:5]:
+    he = info.get("headlines_he", [])
+    summ = info.get("summary_he", "")
+    reas = info.get("reasoning_he", "")
+    fac = info.get("factors", [])
+    print(f"\n=== {sym} (sentiment: {info.get('sentiment',0):+.2f}) ===")
+    print(f"  summary_he: {summ[:80]}")
+    print(f"  reasoning_he: {reas[:80]}")
+    print(f"  factors: {fac[:2]}")
+    print(f"  headlines_he ({len(he)}): {he[:2]}")
