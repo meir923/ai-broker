@@ -31,6 +31,27 @@ RiskLevel = Literal["low", "medium", "high"]
 DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "AMD"]
 
 
+def _align_history_by_date(history: dict[str, list[Bar]]) -> dict[str, list[Bar]]:
+    """Align all symbols to a common date index to prevent cross-sectional mismatches."""
+    if not history:
+        return history
+    date_sets = [
+        {str(b.get("date", "")) for b in bars if b.get("date")}
+        for bars in history.values()
+    ]
+    if not date_sets:
+        return history
+    common_dates = sorted(set.intersection(*date_sets))
+    if len(common_dates) < 30:
+        return history
+
+    aligned: dict[str, list[Bar]] = {}
+    for sym, bars in history.items():
+        by_date = {str(b.get("date", "")): b for b in bars}
+        aligned[sym] = [by_date[d] for d in common_dates if d in by_date]
+    return aligned
+
+
 class AgentSession:
     def __init__(
         self,
@@ -67,6 +88,7 @@ class AgentSession:
         self._news_lock = threading.Lock()
         self._news_fetch_in_progress = False
         self._indicators: dict | None = None
+        self._pending_order_ids: list[str] = []
 
     def _price_for(self, symbol: str) -> float:
         bars = self._history.get(symbol, [])
@@ -85,20 +107,21 @@ class AgentSession:
             eq += qty * px
         return eq
 
-    def _sim_regt_short_margin(self) -> float:
-        """Reg T style margin reserved on short stock (sim only), using mark or avg."""
+    def _sim_total_margin(self) -> float:
+        """Reg T margin for all positions: 50% of notional for longs + shorts."""
         m = 0.0
         for sym, pos in self.positions.items():
             q = pos.get("qty", 0)
-            if q >= 0:
+            if q == 0:
                 continue
             px = self._price_for(sym) or float(pos.get("avg_cost", 0))
             m += abs(q) * px * 0.5
         return m
 
     def _sim_buying_power(self) -> float:
-        """Cash not tied as collateral for simulated shorts."""
-        return max(0.0, self.cash - self._sim_regt_short_margin())
+        """Equity-based buying power: equity minus total margin held for all positions.
+        This prevents the infinite-leverage loop where short proceeds inflate cash."""
+        return max(0.0, self.equity() - self._sim_total_margin())
 
     def _ensure_broker_connected(self) -> Any:
         """Reuse one broker client for paper/live ticks (loaded via factory when available)."""
@@ -171,6 +194,7 @@ class AgentSession:
                 self.error = "no history data"
                 self.running = False
                 return self.status()
+            self._history = _align_history_by_date(self._history)
             from aibroker.agent.fast_strategy import precompute_all
             self._indicators = precompute_all(self._history)
             if self._start_date:
@@ -221,8 +245,9 @@ class AgentSession:
         """Momentum rotation with configurable risk profile."""
         if not self.running:
             return self.status()
-        max_len = min(len(b) for b in self._history.values()) if self._history else 0
-        if self._bar_index >= max_len:
+        raw_len = min(len(b) for b in self._history.values()) if self._history else 0
+        max_len = raw_len - 1  # stop one bar early: last bar has no next-open for execution
+        if max_len < 1 or self._bar_index >= max_len:
             self.running = False
             self._persist_to_db()
             return self.status()
@@ -416,8 +441,13 @@ class AgentSession:
                                     f"מומנטום {r['momentum']:+.1f}% | ROC20 {r['roc20']:+.1f}% | RSI {r['rsi']:.0f}"))
                     self._trailing_stops[sym] = max(r["price"] * TRAIL_PCT, r["price"] - TRAIL_ATR * r["atr"])
 
+        executed_actions: list[tuple[str, str, int, str]] = []
         for sym, action, qty, reason in actions:
+            if not self._sim_risk_allows(sym, action, qty):
+                continue
             self._execute_sim(sym, action, qty, reason, sim_date)
+            executed_actions.append((sym, action, qty, reason))
+        actions = executed_actions
 
         regime_label = "דובי" if bear else "שורי"
         open_count = sum(1 for p in self.positions.values() if p.get("qty", 0) != 0)
@@ -434,9 +464,10 @@ class AgentSession:
         return self.status()
 
     def _tick_sim(self) -> dict[str, Any]:
-        max_len = min(len(b) for b in self._history.values()) if self._history else 0
+        raw_len = min(len(b) for b in self._history.values()) if self._history else 0
+        max_len = raw_len - 1  # stop one bar early for next-open execution
         ref_bars = self._history.get("SPY", list(self._history.values())[0] if self._history else [])
-        if self._bar_index >= max_len:
+        if max_len < 1 or self._bar_index >= max_len:
             self.running = False
             self._persist_to_db()
             return self.status()
@@ -465,6 +496,8 @@ class AgentSession:
             return self.status()
 
         for act in decision.actions:
+            if not self._sim_risk_allows(act.symbol, act.action, act.quantity):
+                continue
             self._execute_sim(act.symbol, act.action, act.quantity, act.reason, sim_date)
 
         self.decisions.append({
@@ -477,14 +510,47 @@ class AgentSession:
         self.step += 1
         return self.status()
 
+    def _sim_risk_allows(self, symbol: str, action: str, qty: int) -> bool:
+        """Enforce risk limits in simulation: daily loss, max exposure, kill switch."""
+        rp = RISK_PROFILES.get(self.risk_level, RISK_PROFILES["medium"])
+        eq = self.equity()
+        pnl = eq - self.initial_deposit
+
+        daily_loss_limit = self.initial_deposit * 0.08
+        if self.risk_level == "low":
+            daily_loss_limit = self.initial_deposit * 0.03
+        elif self.risk_level == "medium":
+            daily_loss_limit = self.initial_deposit * 0.05
+
+        if pnl < -daily_loss_limit:
+            log.debug("Risk gate blocked %s %s: daily loss %.0f > limit %.0f", action, symbol, -pnl, daily_loss_limit)
+            return False
+
+        if action in ("buy", "short") and eq > 0:
+            price = self._next_bar_open(symbol)
+            if price > 0:
+                new_notional = qty * price
+                existing = abs(float(self.positions.get(symbol, {}).get("qty", 0))) * price
+                if (existing + new_notional) / eq > 0.30:
+                    log.debug("Risk gate blocked %s %s: exposure > 30%%", action, symbol)
+                    return False
+        return True
+
+    def _next_bar_open(self, symbol: str) -> float:
+        """Return next bar's open price for lookahead-free execution."""
+        bars = self._history.get(symbol, [])
+        next_idx = self._bar_index + 1
+        if not bars or next_idx >= len(bars):
+            if bars and self._bar_index < len(bars):
+                return float(bars[self._bar_index]["c"])
+            return 0.0
+        return float(bars[next_idx].get("o", bars[next_idx]["c"]))
+
     def _execute_sim(self, symbol: str, action: str, qty: int, reason: str, date: str) -> None:
-        """Unified signed-position execution: positive qty = long, negative = short."""
+        """Unified signed-position execution using NEXT bar open to avoid lookahead bias."""
         if action == "hold" or qty <= 0:
             return
-        bars = self._history.get(symbol, [])
-        if not bars or self._bar_index >= len(bars):
-            return
-        price = float(bars[self._bar_index]["c"])
+        price = self._next_bar_open(symbol)
         if price <= 0:
             return
 
@@ -630,6 +696,25 @@ class AgentSession:
             if qty_baseline is None or changed or i == attempts - 1:
                 break
 
+    def _resolve_pending_orders(self, broker: Any) -> None:
+        """Re-poll any pending orders from the previous tick before making new decisions."""
+        if not self._pending_order_ids:
+            return
+        resolved: list[str] = []
+        for oid in self._pending_order_ids:
+            try:
+                fill = broker.poll_order_fill(oid, timeout_s=3.0, interval_s=0.5)
+                status = str(fill.get("status", ""))
+                if status in ("filled", "partially_filled", "canceled", "expired", "rejected"):
+                    resolved.append(oid)
+                    log.info("Pending order %s resolved: %s", oid, status)
+                else:
+                    log.info("Pending order %s still open: %s", oid, status)
+            except Exception as e:
+                log.warning("Failed to poll pending order %s: %s", oid, e)
+        for oid in resolved:
+            self._pending_order_ids.remove(oid)
+
     def _tick_live(self) -> dict[str, Any]:
         self._request_news_refresh_async()
 
@@ -655,6 +740,8 @@ class AgentSession:
             self.error = str(e)
             self.step += 1
             return self.status()
+
+        self._resolve_pending_orders(broker)
 
         acct_live: dict[str, Any] = {}
         qty_baseline: dict[str, float] = {}
@@ -725,6 +812,9 @@ class AgentSession:
                     pass
                 if result.broker_order_id:
                     fill = broker.poll_order_fill(result.broker_order_id)
+                    fill_status = str(fill.get("status", ""))
+                    if fill_status not in ("filled",) and result.broker_order_id:
+                        self._pending_order_ids.append(result.broker_order_id)
             px = float(fill.get("filled_avg_price") or 0.0)
             fq = int(fill.get("filled_qty") or 0)
             self.trades.append({
