@@ -108,20 +108,24 @@ class AgentSession:
             eq += qty * px
         return eq
 
+    def _margin_rate(self) -> float:
+        rp = RISK_PROFILES.get(self.risk_level, RISK_PROFILES["medium"])
+        return float(rp.get("margin_rate", 0.50))
+
     def _sim_total_margin(self) -> float:
-        """Reg T margin for all positions: 50% of notional for longs + shorts."""
+        """Margin for all positions based on risk-level leverage."""
+        rate = self._margin_rate()
         m = 0.0
         for sym, pos in self.positions.items():
             q = pos.get("qty", 0)
             if q == 0:
                 continue
             px = self._price_for(sym) or float(pos.get("avg_cost", 0))
-            m += abs(q) * px * 0.5
+            m += abs(q) * px * rate
         return m
 
     def _sim_buying_power(self) -> float:
-        """Equity-based buying power: equity minus total margin held for all positions.
-        This prevents the infinite-leverage loop where short proceeds inflate cash."""
+        """Equity-based buying power: equity minus total margin held for all positions."""
         return max(0.0, self.equity() - self._sim_total_margin())
 
     def _ensure_broker_connected(self) -> Any:
@@ -358,10 +362,11 @@ class AgentSession:
                             continue
                         alloc = eq * 0.12
                         qty = max(1, int(alloc / r["price"]))
-                        margin = qty * r["price"] * 0.5
+                        m_rate = self._margin_rate()
+                        margin = qty * r["price"] * m_rate
                         bp = self._sim_buying_power()
                         if margin > bp * 0.25:
-                            qty = max(1, int(bp * 0.25 / (r["price"] * 0.5)))
+                            qty = max(1, int(bp * 0.25 / (r["price"] * m_rate)))
                         if qty > 0:
                             actions.append((r["symbol"], "short", qty,
                                             f"שוק דובי | מומנטום {r['momentum']:+.1f}%"))
@@ -486,6 +491,9 @@ class AgentSession:
             sim_date=sim_date,
         )
         snapshot["risk_level"] = self.risk_level
+        rp = RISK_PROFILES.get(self.risk_level, RISK_PROFILES["medium"])
+        snapshot["portfolio"]["buying_power"] = round(self._sim_buying_power(), 2)
+        snapshot["portfolio"]["leverage"] = rp.get("leverage", 2.0)
 
         try:
             decision = think(snapshot, allowed_symbols=self.symbols)
@@ -574,10 +582,11 @@ class AgentSession:
             self.cash += price * qty
 
         elif action == "short":
-            margin = price * qty * 0.5
+            rate = self._margin_rate()
+            margin = price * qty * rate
             bp = self._sim_buying_power()
             if margin > bp:
-                qty = int(bp / (price * 0.5))
+                qty = int(bp / (price * rate))
                 if qty <= 0:
                     return
             delta = -qty
@@ -659,7 +668,7 @@ class AgentSession:
             return max(0, min(int(requested), max_q))
         if cur_q > 0:
             return max(0, min(int(requested), int(cur_q)))
-        margin_per = est_px * 0.5
+        margin_per = est_px * self._margin_rate()
         if margin_per <= 0:
             return 0
         max_q = int(max(0, bp * 0.9 / margin_per))

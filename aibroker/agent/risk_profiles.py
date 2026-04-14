@@ -20,6 +20,8 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "momentum_w20": 0.40,
         "momentum_w50": 0.35,
         "rebalance_trim_above": 1.5,
+        "leverage": 2.0,
+        "margin_rate": 0.50,
     },
     "medium": {
         "target_positions": 7,
@@ -36,6 +38,8 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "momentum_w20": 0.40,
         "momentum_w50": 0.35,
         "rebalance_trim_above": 1.4,
+        "leverage": 3.0,
+        "margin_rate": 0.34,
     },
     "high": {
         "target_positions": 8,
@@ -52,5 +56,7 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "momentum_w20": 0.38,
         "momentum_w50": 0.40,
         "rebalance_trim_above": 1.3,
+        "leverage": 4.0,
+        "margin_rate": 0.25,
     },
 }

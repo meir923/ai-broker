@@ -41,9 +41,9 @@ SYSTEM_PROMPT = """אתה סוכן מסחר אוטונומי מקצועי שמנ
 
 
 RISK_INSTRUCTIONS = {
-    "low": "רמת סיכון נמוכה: עד 20% מההון בפוזיציה. העדף מניות גדולות (SPY, QQQ, MSFT). שורטים רק בטרנד ברור. סטופ 8%.",
-    "medium": "רמת סיכון בינונית: עד 25% מההון בפוזיציה. שורטים מותרים. מסחר אקטיבי עם ניהול סיכונים. סטופ 12%.",
-    "high": "רמת סיכון מוגברת: עד 30% מההון בפוזיציה. שורטים ולונגים אגרסיביים. פוזיציות גדולות. סטופ 18%.",
+    "low": "רמת סיכון נמוכה: מינוף 2:1. עד 20% מההון בפוזיציה. שורטים בטרנד ברור. סטופ 8%.",
+    "medium": "רמת סיכון בינונית: מינוף 3:1. עד 25% מההון בפוזיציה. שורטים מותרים. מסחר אקטיבי. סטופ 12%.",
+    "high": "רמת סיכון מוגברת: מינוף 4:1. עד 30% מההון בפוזיציה. שורטים ולונגים אגרסיביים. כמויות גדולות. סטופ 18%.",
 }
 
 
@@ -63,7 +63,10 @@ def format_user_prompt(snapshot: dict[str, Any]) -> str:
 
     port = snapshot.get("portfolio", {})
     lines.append("--- Portfolio ---")
+    bp = port.get("buying_power", 0)
+    lev = port.get("leverage", 2.0)
     lines.append(f"Cash: ${port.get('cash', 0):,.0f} | Equity: ${port.get('equity', 0):,.0f} | PnL: ${port.get('pnl', 0):+,.0f} ({port.get('pnl_pct', 0):+.1f}%)")
+    lines.append(f"Buying Power: ${bp:,.0f} | Leverage: {lev:.0f}:1")
 
     positions = port.get("positions", [])
     open_count = len(positions)

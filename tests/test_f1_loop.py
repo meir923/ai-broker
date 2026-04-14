@@ -106,7 +106,7 @@ class TestSimBuyingPower:
         s.positions = {"SPY": {"qty": 100, "avg_cost": px}}
         s.cash = 100_000 - 100 * px
         eq = s.equity()
-        margin = 100 * px * 0.5
+        margin = 100 * px * s._margin_rate()
         assert s._sim_buying_power() == pytest.approx(eq - margin)
 
     def test_short_does_NOT_inflate_bp(self):
