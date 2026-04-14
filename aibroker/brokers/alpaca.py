@@ -14,6 +14,9 @@ log = logging.getLogger(__name__)
 _quote_cache: dict[str, tuple[float, float]] = {}
 _QUOTE_TTL = 4.0
 
+_hist_data_client: Any = None
+_hist_data_client_keys: tuple[str, str] | None = None
+
 
 def _alpaca_keys() -> tuple[str, str]:
     api_key = os.environ.get("ALPACA_API_KEY", "").strip()
@@ -24,6 +27,22 @@ def _alpaca_keys() -> tuple[str, str]:
 def alpaca_keys_set() -> bool:
     k, s = _alpaca_keys()
     return bool(k and s)
+
+
+def _get_stock_historical_client() -> Any | None:
+    """Reuse one StockHistoricalDataClient per key pair (quotes / prices)."""
+    global _hist_data_client, _hist_data_client_keys
+    api_key, secret_key = _alpaca_keys()
+    if not api_key or not secret_key:
+        return None
+    keys = (api_key, secret_key)
+    if _hist_data_client is not None and _hist_data_client_keys == keys:
+        return _hist_data_client
+    from alpaca.data.historical import StockHistoricalDataClient
+
+    _hist_data_client = StockHistoricalDataClient(api_key, secret_key)
+    _hist_data_client_keys = keys
+    return _hist_data_client
 
 
 def fetch_alpaca_quotes(symbols: list[str]) -> dict[str, float]:
@@ -49,9 +68,10 @@ def fetch_alpaca_quotes(symbols: list[str]) -> dict[str, float]:
 
     try:
         from alpaca.data.requests import StockLatestQuoteRequest
-        from alpaca.data.historical import StockHistoricalDataClient
 
-        client = StockHistoricalDataClient(api_key, secret_key)
+        client = _get_stock_historical_client()
+        if client is None:
+            return result
         req = StockLatestQuoteRequest(symbol_or_symbols=needed)
         quotes = client.get_stock_latest_quote(req)
 
@@ -221,9 +241,9 @@ class AlpacaBrokerClient(BrokerClient):
     def _get_current_price(self, symbol: str) -> float:
         try:
             from alpaca.data.requests import StockLatestQuoteRequest
-            from alpaca.data.historical import StockHistoricalDataClient
-            api_key, secret_key = _alpaca_keys()
-            client = StockHistoricalDataClient(api_key, secret_key)
+            client = _get_stock_historical_client()
+            if client is None:
+                return 0.0
             req = StockLatestQuoteRequest(symbol_or_symbols=[symbol.upper()])
             quotes = client.get_stock_latest_quote(req)
             q = quotes.get(symbol.upper())

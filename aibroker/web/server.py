@@ -105,6 +105,8 @@ class ListLogHandler(logging.Handler):
 def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
     profile_path = profile_path.resolve()
 
+    # מצב הסוכן נשמר במשתני closure של אפליקציה זו בלבד. מנוע אחד לתהליך (למשל uvicorn עם worker יחיד)
+    # מתאים לשימוש נוכחי; הרצת כמה workers תדרוש אחסון מצב חיצוני או sticky sessions.
     _agent_session = None
     _guardian = None
 

@@ -62,16 +62,15 @@ def _get_grok() -> GrokClient:
     return _grok
 
 
-def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) -> AgentDecision:
-    user_msg = format_user_prompt(snapshot)
-    log.info("Agent prompt (%d chars):\n%s", len(user_msg), user_msg[:800])
-
-    grok = _get_grok()
-    resp = grok.chat_json(SYSTEM_PROMPT, user_msg)
-    log.info("Grok response: %s", resp)
-
+def _parse_actions(
+    resp: dict[str, Any],
+    allowed_symbols: list[str] | None,
+) -> tuple[list[AgentAction], set[str]]:
+    """Returns (actions, rejected_symbols_not_in_allowlist)."""
+    allowed_u = [s.upper() for s in (allowed_symbols or [])]
     actions_raw = resp.get("actions", [])
     actions: list[AgentAction] = []
+    rejected: set[str] = set()
     for a in actions_raw:
         sym = str(a.get("symbol", "")).upper()
         act = str(a.get("action", "hold")).lower()
@@ -79,16 +78,47 @@ def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) ->
         reason = str(a.get("reason", ""))
         if act not in ("buy", "sell", "hold", "short", "cover"):
             act = "hold"
-        if allowed_symbols and sym not in [s.upper() for s in allowed_symbols]:
+        if allowed_symbols and sym not in allowed_u:
+            if sym and act != "hold":
+                rejected.add(sym)
             log.warning("Agent tried to trade %s but not in allowed list", sym)
             continue
         if qty <= 0 and act in ("buy", "sell", "short", "cover"):
             log.warning("Agent returned %s with qty %d, skipping", act, qty)
             continue
         actions.append(AgentAction(sym, act, qty, reason))
+    return actions, rejected
+
+
+def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) -> AgentDecision:
+    grok = _get_grok()
+    correction = ""
+    resp: dict[str, Any] = {}
+    for attempt in range(2):
+        base = format_user_prompt(snapshot)
+        user_msg = f"{correction}\n\n{base}" if correction else base
+        log.info("Agent prompt (%d chars, attempt %d):\n%s", len(user_msg), attempt + 1, user_msg[:800])
+
+        resp = grok.chat_json(SYSTEM_PROMPT, user_msg)
+        log.info("Grok response: %s", resp)
+
+        actions, rejected = _parse_actions(resp, allowed_symbols)
+        if actions or not rejected or attempt == 1:
+            return AgentDecision(
+                actions=actions,
+                market_view=str(resp.get("market_view", "")),
+                risk_note=str(resp.get("risk_note", "")),
+                raw=resp,
+            )
+        allow_txt = ", ".join(allowed_symbols or [])
+        bad = ", ".join(sorted(rejected))
+        correction = (
+            f"[תיקון פנימי] ניסית לסחור בסימבולים שאינם ברשימה: {bad}. "
+            f"המותרים בלבד: {allow_txt}. החזר JSON תקין רק עם סימבולים מותרים וכמויות חיוביות."
+        )
 
     return AgentDecision(
-        actions=actions,
+        actions=[],
         market_view=str(resp.get("market_view", "")),
         risk_note=str(resp.get("risk_note", "")),
         raw=resp,

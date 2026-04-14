@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -31,6 +32,9 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "bear_trigger": "below_200",
         "rotation_threshold": -5.0,
         "label_he": "נמוך",
+        "momentum_w10": 0.25,
+        "momentum_w20": 0.40,
+        "momentum_w50": 0.35,
     },
     "medium": {
         "target_positions": 5,
@@ -43,6 +47,9 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "bear_trigger": "below_200_and_50",
         "rotation_threshold": -2.0,
         "label_he": "בינוני",
+        "momentum_w10": 0.25,
+        "momentum_w20": 0.40,
+        "momentum_w50": 0.35,
     },
     "high": {
         "target_positions": 7,
@@ -55,6 +62,9 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "bear_trigger": "below_200_and_50",
         "rotation_threshold": -1.0,
         "label_he": "מוגבר",
+        "momentum_w10": 0.22,
+        "momentum_w20": 0.38,
+        "momentum_w50": 0.40,
     },
 }
 
@@ -91,6 +101,9 @@ class AgentSession:
         self._trailing_stops: dict[str, float] = {}
         self._last_rebalance: int = -999
         self._db_session_id: int = 0
+        self._broker: Any = None
+        self._news_lock = threading.Lock()
+        self._news_fetch_in_progress = False
 
     def _price_for(self, symbol: str) -> float:
         bars = self._history.get(symbol, [])
@@ -108,6 +121,60 @@ class AgentSession:
             px = self._price_for(sym) or pos.get("avg_cost", 0)
             eq += qty * px
         return eq
+
+    def _sim_regt_short_margin(self) -> float:
+        """Reg T style margin reserved on short stock (sim only), using mark or avg."""
+        m = 0.0
+        for sym, pos in self.positions.items():
+            q = pos.get("qty", 0)
+            if q >= 0:
+                continue
+            px = self._price_for(sym) or float(pos.get("avg_cost", 0))
+            m += abs(q) * px * 0.5
+        return m
+
+    def _sim_buying_power(self) -> float:
+        """Cash not tied as collateral for simulated shorts."""
+        return max(0.0, self.cash - self._sim_regt_short_margin())
+
+    def _ensure_broker_connected(self) -> Any:
+        """Reuse one Alpaca client for paper/live ticks."""
+        if self.mode not in ("paper", "live"):
+            return None
+        if self._broker is None:
+            from aibroker.brokers.alpaca import AlpacaBrokerClient
+
+            self._broker = AlpacaBrokerClient(paper=(self.mode == "paper"))
+            self._broker.connect()
+        return self._broker
+
+    def _request_news_refresh_async(self) -> None:
+        """Refresh RSS/news in a daemon thread so the tick loop is not blocked."""
+        if self.mode not in ("paper", "live"):
+            return
+        now = time.time()
+        if now - self._last_news_fetch <= 300:
+            return
+        with self._news_lock:
+            if self._news_fetch_in_progress:
+                return
+            self._news_fetch_in_progress = True
+
+        symbols = list(self.symbols)
+
+        def worker() -> None:
+            try:
+                cache = collect_news(symbols)
+                with self._news_lock:
+                    self._news_cache = cache
+                    self._last_news_fetch = time.time()
+            except Exception as e:
+                log.warning("Background news fetch failed: %s", e)
+            finally:
+                with self._news_lock:
+                    self._news_fetch_in_progress = False
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def start(self) -> dict[str, Any]:
         log.info("Agent session starting: mode=%s symbols=%s deposit=%s", self.mode, self.symbols, self.initial_deposit)
@@ -141,6 +208,12 @@ class AgentSession:
         else:
             self._history = load_history(self.symbols, bars=200)
             self._bar_index = max(0, len(list(self._history.values())[0]) - 1) if self._history else 0
+            try:
+                self._ensure_broker_connected()
+            except Exception as e:
+                log.error("Alpaca connect on start failed: %s", e)
+                self.error = str(e)
+                self.running = False
 
         return self.status()
 
@@ -180,9 +253,13 @@ class AgentSession:
             self.running = False
             self._persist_to_db()
             return self.status()
-        first_bars = list(self._history.values())[0] if self._history else []
-        sim_date = first_bars[self._bar_index].get("date", str(self._bar_index))
+        ref_bars = self._history.get("SPY") or (list(self._history.values())[0] if self._history else [])
         idx = self._bar_index
+        if not ref_bars or idx >= len(ref_bars):
+            self._bar_index += 1
+            self.step += 1
+            return self.status()
+        sim_date = ref_bars[idx].get("date", str(idx))
 
         rp = RISK_PROFILES[self.risk_level]
         TARGET_POS = rp["target_positions"]
@@ -195,7 +272,7 @@ class AgentSession:
 
         from aibroker.agent.collector import sma as calc_sma, atr as calc_atr, rsi as calc_rsi
 
-        spy_bars = self._history.get("SPY", first_bars)
+        spy_bars = self._history.get("SPY", ref_bars)
         spy_price = float(spy_bars[idx]["c"]) if idx < len(spy_bars) else 0
         spy_ma200 = calc_sma(spy_bars, idx, min(200, idx + 1))
         spy_ma50 = calc_sma(spy_bars, idx, 50)
@@ -230,7 +307,10 @@ class AgentSession:
             roc20 = (price / float(bars[idx - 20]["c"]) - 1) * 100
             roc50 = (price / float(bars[idx - 50]["c"]) - 1) * 100 if idx >= 50 else roc20
 
-            momentum = roc10 * 0.25 + roc20 * 0.40 + roc50 * 0.35
+            w10 = float(rp.get("momentum_w10", 0.25))
+            w20 = float(rp.get("momentum_w20", 0.40))
+            w50 = float(rp.get("momentum_w50", 0.35))
+            momentum = roc10 * w10 + roc20 * w20 + roc50 * w50
 
             rankings.append({
                 "symbol": sym, "price": price, "momentum": round(momentum, 2),
@@ -312,8 +392,9 @@ class AgentSession:
                         alloc = eq * 0.12
                         qty = max(1, int(alloc / r["price"]))
                         margin = qty * r["price"] * 0.5
-                        if margin > self.cash * 0.25:
-                            qty = max(1, int(self.cash * 0.25 / (r["price"] * 0.5)))
+                        bp = self._sim_buying_power()
+                        if margin > bp * 0.25:
+                            qty = max(1, int(bp * 0.25 / (r["price"] * 0.5)))
                         if qty > 0:
                             actions.append((r["symbol"], "short", qty,
                                             f"שוק דובי | מומנטום {r['momentum']:+.1f}%"))
@@ -345,7 +426,7 @@ class AgentSession:
                             self._trailing_stops.pop(sym, None)
                             closed_syms.add(sym)
 
-                available = self.cash
+                available = self._sim_buying_power()
                 for a_sym, a_act, a_qty, _ in actions:
                     r = next((x for x in rankings if x["symbol"] == a_sym), None)
                     if r:
@@ -449,8 +530,9 @@ class AgentSession:
 
         if action == "buy":
             cost = price * qty
-            if cost > self.cash:
-                qty = int(self.cash / price)
+            bp = self._sim_buying_power()
+            if cost > bp:
+                qty = int(bp / price)
                 if qty <= 0:
                     return
                 cost = price * qty
@@ -502,8 +584,9 @@ class AgentSession:
 
         elif action == "short":
             margin = price * qty * 0.5
-            if margin > self.cash:
-                qty = int(self.cash / (price * 0.5))
+            bp = self._sim_buying_power()
+            if margin > bp:
+                qty = int(bp / (price * 0.5))
                 if qty <= 0:
                     return
             self.cash += price * qty
@@ -552,11 +635,7 @@ class AgentSession:
             })
 
     def _tick_live(self) -> dict[str, Any]:
-        from aibroker.brokers.alpaca import AlpacaBrokerClient
-
-        if time.time() - self._last_news_fetch > 300:
-            self._news_cache = collect_news(self.symbols)
-            self._last_news_fetch = time.time()
+        self._request_news_refresh_async()
 
         self._history = load_history(self.symbols, bars=200)
         if self._history:
@@ -573,9 +652,15 @@ class AgentSession:
         )
         snapshot["risk_level"] = self.risk_level
 
-        broker = AlpacaBrokerClient(paper=(self.mode == "paper"))
         try:
-            broker.connect()
+            broker = self._ensure_broker_connected()
+        except Exception as e:
+            log.error("Alpaca connect failed: %s", e)
+            self.error = str(e)
+            self.step += 1
+            return self.status()
+
+        try:
             acct = broker.get_account()
             if acct:
                 self.cash = acct.get("cash_usd", self.cash)
@@ -646,6 +731,12 @@ class AgentSession:
     def stop(self) -> dict[str, Any]:
         self.running = False
         self._persist_to_db()
+        if self._broker is not None:
+            try:
+                self._broker.disconnect()
+            except Exception:
+                pass
+            self._broker = None
         try:
             from aibroker.agent.persistence import mark_stopped
             mark_stopped()
