@@ -344,3 +344,27 @@ class TestSimRiskAllows:
     def test_allows_small_exposure(self):
         s = _session({"SPY": _bars(100, base=100)}, deposit=100_000, risk="medium")
         assert s._sim_risk_allows("SPY", "buy", 10) is True
+
+
+class TestDequeMemoryBound:
+    """Verify trades/decisions use bounded deque to prevent memory leak."""
+
+    def test_trades_is_deque(self):
+        from collections import deque
+        s = _session({"SPY": _bars(60)})
+        assert isinstance(s.trades, deque)
+        assert s.trades.maxlen == 1000
+
+    def test_decisions_is_deque(self):
+        from collections import deque
+        s = _session({"SPY": _bars(60)})
+        assert isinstance(s.decisions, deque)
+        assert s.decisions.maxlen == 1000
+
+    def test_deque_drops_oldest(self):
+        from collections import deque
+        s = _session({"SPY": _bars(60)})
+        for i in range(1100):
+            s.trades.append({"step": i})
+        assert len(s.trades) == 1000
+        assert s.trades[0]["step"] == 100  # oldest 100 dropped

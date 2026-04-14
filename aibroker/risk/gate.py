@@ -22,6 +22,8 @@ def evaluate_intent(
 ) -> RiskDecision:
     if cfg.risk.kill_switch or state.kill_switch:
         return RiskDecision(False, "kill_switch is active")
+    if not intent.symbol or not isinstance(intent.symbol, str):
+        return RiskDecision(False, "invalid or missing symbol")
     sym = intent.symbol.strip().upper()
     if not sym:
         return RiskDecision(False, "empty symbol")

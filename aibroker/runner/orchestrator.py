@@ -46,8 +46,11 @@ def run_once(cfg: AppConfig, *, connect_broker: bool = False) -> None:
             if cfg.execution.dry_run:
                 log.info("[dry_run] would place %s %s %s", intent.side, intent.quantity, intent.symbol)
             elif broker is not None:
-                res = broker.place_order(intent)
-                log.info("Order result: %s", res.message)
+                try:
+                    res = broker.place_order(intent)
+                    log.info("Order result: %s", res.message)
+                except Exception as e:
+                    log.error("Failed to place order for %s: %s", intent.symbol, e)
             else:
                 b = make_broker(cfg)
                 b.connect()

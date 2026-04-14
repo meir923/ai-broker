@@ -6,6 +6,7 @@ import logging
 import math
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -67,8 +68,8 @@ class AgentSession:
         self.initial_deposit = deposit
         self.cash = deposit
         self.positions: dict[str, dict[str, float]] = {}
-        self.trades: list[dict[str, Any]] = []
-        self.decisions: list[dict[str, Any]] = []
+        self.trades: deque[dict[str, Any]] = deque(maxlen=1000)
+        self.decisions: deque[dict[str, Any]] = deque(maxlen=1000)
         self.step = 0
         self.running = False
         self.error: str | None = None
@@ -722,6 +723,9 @@ class AgentSession:
         if self._history:
             self._bar_index = len(list(self._history.values())[0]) - 1
 
+        with self._news_lock:
+            safe_news = list(self._news_cache)
+
         snapshot = build_snapshot(
             symbols=self.symbols,
             history=self._history,
@@ -729,7 +733,7 @@ class AgentSession:
             positions=self.positions,
             cash=self.cash,
             initial_deposit=self.initial_deposit,
-            news=self._news_cache,
+            news=safe_news,
         )
         snapshot["risk_level"] = self.risk_level
 

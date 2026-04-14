@@ -42,11 +42,33 @@ class TestKillSwitch:
 
 # ── empty symbol ─────────────────────────────────────────────────────────
 
+class TestNoneSymbol:
+    """Validates that None/non-str symbol is rejected at Pydantic or gate level."""
+
+    def test_none_symbol_rejected_by_pydantic(self):
+        import pydantic
+        with pytest.raises(pydantic.ValidationError):
+            OrderIntent(symbol=None, side="buy", quantity=10, order_type="market")
+
+    def test_int_symbol_rejected_by_pydantic(self):
+        import pydantic
+        with pytest.raises(pydantic.ValidationError):
+            OrderIntent(symbol=123, side="buy", quantity=10, order_type="market")
+
+    def test_empty_string_blocked_by_gate(self):
+        """Even if empty string passes Pydantic, gate catches it."""
+        cfg = _cfg()
+        state = RuntimeState(trades_today=0)
+        intent = OrderIntent(symbol="", side="buy", quantity=10, order_type="market")
+        d = evaluate_intent(cfg, state, intent)
+        assert d.allowed is False
+
+
 class TestEmptySymbol:
     def test_empty_string_blocked(self):
         r = evaluate_intent(_cfg(), _state(), _intent(symbol=""))
         assert r.allowed is False
-        assert "empty" in r.reason
+        assert "invalid" in r.reason or "empty" in r.reason
 
     def test_whitespace_only_blocked(self):
         r = evaluate_intent(_cfg(), _state(), _intent(symbol="  "))
