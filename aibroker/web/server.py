@@ -31,6 +31,7 @@ from aibroker.simulation.paper_autopilot import (
 from aibroker.web.demo_data import build_demo_charts
 
 _STATIC = Path(__file__).resolve().parent / "static"
+_run_once_log_lock = threading.Lock()
 
 
 class PaperStartBody(BaseModel):
@@ -456,19 +457,20 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
     @app.post("/api/run-once")
     async def run_once_api() -> JSONResponse:
         cfg = _cfg()
-        root = logging.getLogger()
-        h = ListLogHandler()
-        h.setLevel(logging.INFO)
-        root.addHandler(h)
-        prev = root.level
-        root.setLevel(logging.INFO)
-        try:
-            run_once(cfg, connect_broker=False)
-            text = "\n".join(h.lines) if h.lines else "הסתיים (אין שורות לוג — בדוק שרמת לוג)."
-            return JSONResponse({"lines": text})
-        finally:
-            root.removeHandler(h)
-            root.setLevel(prev)
+        with _run_once_log_lock:
+            lg = logging.getLogger("aibroker")
+            h = ListLogHandler()
+            h.setLevel(logging.INFO)
+            lg.addHandler(h)
+            prev_level = lg.level
+            lg.setLevel(logging.INFO)
+            try:
+                run_once(cfg, connect_broker=False)
+                text = "\n".join(h.lines) if h.lines else "הסתיים (אין שורות לוג — בדוק שרמת לוג)."
+                return JSONResponse({"lines": text})
+            finally:
+                lg.removeHandler(h)
+                lg.setLevel(prev_level)
 
     def _trade_demo_payload() -> JSONResponse:
         cfg = _cfg()
@@ -677,6 +679,8 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
 
         try:
             from aibroker.llm.grok import GrokClient
+            import httpx
+
             client = GrokClient()
             payload = {
                 "model": client.model,
@@ -686,9 +690,8 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
                 ],
                 "temperature": 0.4,
             }
-            import httpx
-            with httpx.Client(timeout=client.timeout_s) as http:
-                r = http.post(
+            async with httpx.AsyncClient(timeout=client.timeout_s) as http:
+                r = await http.post(
                     "https://api.x.ai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {client._key}", "Content-Type": "application/json"},
                     json=payload,
@@ -714,16 +717,23 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
     async def paper_step_api() -> JSONResponse:
         cfg = _cfg()
         from aibroker.simulation.paper_autopilot import _session, _step_once, _lock
-        with _lock:
-            s = _session
-            if s is None:
-                return JSONResponse({"ok": False, "error": "אין סימולציה פעילה"})
-            if not s.running:
-                return JSONResponse({"ok": False, "error": "הסימולציה הסתיימה"})
-            try:
-                _step_once(cfg, s)
-            except Exception as e:
-                return JSONResponse({"ok": False, "error": str(e)})
+
+        def _locked_step() -> tuple[bool, str | None]:
+            with _lock:
+                s = _session
+                if s is None:
+                    return False, "אין סימולציה פעילה"
+                if not s.running:
+                    return False, "הסימולציה הסתיימה"
+                try:
+                    _step_once(cfg, s)
+                except Exception as e:
+                    return False, str(e)
+            return True, None
+
+        ok, err = await asyncio.to_thread(_locked_step)
+        if not ok:
+            return JSONResponse({"ok": False, "error": err})
         return JSONResponse({"ok": True, **paper_status(cfg)})
 
     @app.get("/api/alpaca/account")
@@ -768,14 +778,21 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
 
     @app.get("/api/alpaca/quotes")
     async def alpaca_quotes() -> JSONResponse:
-        from aibroker.brokers.alpaca import alpaca_keys_set, fetch_alpaca_quotes
+        from aibroker.brokers.alpaca import alpaca_keys_set, fetch_alpaca_quote_book
 
         if not alpaca_keys_set():
             return JSONResponse({"ok": False, "error": "מפתחות Alpaca לא מוגדרים"})
         cfg = _cfg()
         symbols = cfg.risk.allowed_symbols or ["SPY", "QQQ"]
-        prices = fetch_alpaca_quotes(symbols)
-        return JSONResponse({"ok": True, "prices": prices, "source": "alpaca_live"})
+        book = fetch_alpaca_quote_book(symbols)
+        prices = {k: v["mid"] for k, v in book.items()}
+        return JSONResponse({
+            "ok": True,
+            "prices": prices,
+            "book": book,
+            "source": "alpaca_live",
+            "note": "mid=ממוצע; לשמר על ריאליזם: קנייה קרוב ל-ask, מכירה ל-bid",
+        })
 
     # ══════════════════════════════════════════════════
     # AI Agent routes
@@ -822,7 +839,7 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
         if session is None:
             return JSONResponse({"ok": False, "error": "no_session"})
         try:
-            out = session.tick_fast()
+            out = await asyncio.to_thread(session.tick_fast)
             return JSONResponse({"ok": True, **out})
         except Exception as e:
             log.exception("Agent fast tick error")
@@ -870,18 +887,21 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
             return JSONResponse({"ok": False})
         if session.mode not in ("paper", "live"):
             return JSONResponse({"ok": False, "reason": "sim_mode"})
-        try:
+
+        def _fetch_alpaca_portfolio(sess: object) -> dict[str, object]:
             from aibroker.brokers.alpaca import AlpacaBrokerClient
-            broker = AlpacaBrokerClient(paper=(session.mode == "paper"))
+
+            broker = AlpacaBrokerClient(paper=(sess.mode == "paper"))
             broker.connect()
-            acct = broker.get_account()
-            positions = broker.positions()
-            broker.disconnect()
+            try:
+                acct = broker.get_account()
+                positions = broker.positions()
+            finally:
+                broker.disconnect()
 
             equity = float(acct.get("equity_usd", 0))
             cash = float(acct.get("cash_usd", 0))
-            pnl = float(acct.get("pnl_usd", 0))
-            pnl_pct = (equity / session.initial_deposit - 1) * 100 if session.initial_deposit > 0 else 0
+            pnl_pct = (equity / sess.initial_deposit - 1) * 100 if sess.initial_deposit > 0 else 0
 
             pos_detail = []
             for p in positions:
@@ -902,14 +922,17 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
                     "unrealized_pnl_pct": round(upl_pct, 2),
                 })
 
-            return JSONResponse({
-                "ok": True,
+            return {
                 "equity": round(equity, 2),
                 "cash": round(cash, 2),
-                "pnl": round(equity - session.initial_deposit, 2),
+                "pnl": round(equity - sess.initial_deposit, 2),
                 "pnl_pct": round(pnl_pct, 2),
                 "positions_detail": pos_detail,
-            })
+            }
+
+        try:
+            data = await asyncio.to_thread(_fetch_alpaca_portfolio, session)
+            return JSONResponse({"ok": True, **data})
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)})
 

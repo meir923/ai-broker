@@ -8,12 +8,21 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from aibroker.agent.brain import AgentDecision, think
 from aibroker.agent.collector import build_snapshot, collect_news
 from aibroker.data.historical import Bar, load_history
 
 log = logging.getLogger(__name__)
+
+_NY_TZ = ZoneInfo("America/New_York")
+
+
+def _agent_trade_timestamp() -> str:
+    """US market wall time for live/paper trade logs (consistent with US session)."""
+    return datetime.now(_NY_TZ).strftime("%Y-%m-%d %H:%M ET")
+
 
 Mode = Literal["sim", "paper", "live"]
 RiskLevel = Literal["low", "medium", "high"]
@@ -302,6 +311,8 @@ class AgentSession:
             ma50 = calc_sma(bars, idx, 50)
             if any(v is None for v in (a14, r14, ma20, ma50)):
                 continue
+            if price <= 0:
+                continue
 
             roc10 = (price / float(bars[idx - 10]["c"]) - 1) * 100 if idx >= 10 else 0
             roc20 = (price / float(bars[idx - 20]["c"]) - 1) * 100
@@ -312,8 +323,12 @@ class AgentSession:
             w50 = float(rp.get("momentum_w50", 0.35))
             momentum = roc10 * w10 + roc20 * w20 + roc50 * w50
 
+            b = bars[idx]
+            bar_high = float(b.get("h", price))
+            bar_low = float(b.get("l", price))
             rankings.append({
-                "symbol": sym, "price": price, "momentum": round(momentum, 2),
+                "symbol": sym, "price": price, "bar_high": bar_high, "bar_low": bar_low,
+                "momentum": round(momentum, 2),
                 "roc10": round(roc10, 2), "roc20": round(roc20, 2), "roc50": round(roc50, 2),
                 "rsi": r14, "atr": a14, "ma20": ma20, "ma50": ma50,
                 "above_ma50": price > ma50,
@@ -339,15 +354,17 @@ class AgentSession:
             if not r:
                 continue
             price = r["price"]
+            bar_hi = float(r.get("bar_high", price))
+            bar_lo = float(r.get("bar_low", price))
             atr_val = r["atr"] or 1
 
             if q > 0:
                 trail_base = max(avg * TRAIL_PCT, avg - TRAIL_ATR * atr_val)
                 trail = self._trailing_stops.get(sym, trail_base)
-                new_trail = max(trail, price - TRAIL_ATR * atr_val, price * TRAIL_PCT)
+                new_trail = max(trail, bar_hi - TRAIL_ATR * atr_val, bar_hi * TRAIL_PCT)
                 self._trailing_stops[sym] = new_trail
 
-                if price <= new_trail:
+                if bar_lo <= new_trail:
                     pnl_pct = (price / avg - 1) * 100 if avg > 0 else 0
                     actions.append((sym, "sell", abs(int(q)),
                                     f"סטופ נגרר ${new_trail:.0f} | {pnl_pct:+.1f}%"))
@@ -357,10 +374,10 @@ class AgentSession:
                 stop_up = 2.0 - TRAIL_PCT
                 trail_base = min(avg * (1 + stop_up), avg + TRAIL_ATR * atr_val)
                 trail = self._trailing_stops.get(sym, trail_base)
-                new_trail = min(trail, price + TRAIL_ATR * atr_val, price * (1 + stop_up))
+                new_trail = min(trail, bar_lo + TRAIL_ATR * atr_val, bar_lo * (1 + stop_up))
                 self._trailing_stops[sym] = new_trail
 
-                if price >= new_trail:
+                if bar_hi >= new_trail:
                     pnl_pct = (avg / price - 1) * 100 if price > 0 else 0
                     actions.append((sym, "cover", abs(int(q)),
                                     f"סטופ נגרר ${new_trail:.0f} | {pnl_pct:+.1f}%"))
@@ -389,6 +406,8 @@ class AgentSession:
                                    and r["symbol"] not in self.positions],
                                   key=lambda x: x["momentum"])
                     for r in weak[:2]:
+                        if r["price"] <= 0:
+                            continue
                         alloc = eq * 0.12
                         qty = max(1, int(alloc / r["price"]))
                         margin = qty * r["price"] * 0.5
@@ -434,9 +453,12 @@ class AgentSession:
                             available += a_qty * r["price"]
 
                 alloc_per = eq * INVEST_PCT / max(TARGET_POS, 1)
+                trim_hi = float(rp.get("rebalance_trim_above", 1.35))
                 for r in top:
                     sym = r["symbol"]
                     if sym in closed_syms:
+                        continue
+                    if r["price"] <= 0:
                         continue
                     existing_qty = self.positions.get(sym, {}).get("qty", 0)
                     if existing_qty > 0:
@@ -448,6 +470,18 @@ class AgentSession:
                                 available -= cost
                                 actions.append((sym, "buy", add_qty,
                                                 f"הוספה | מומנטום {r['momentum']:+.1f}%"))
+                        elif existing_val > alloc_per * trim_hi:
+                            target_qty = max(1, int(alloc_per / r["price"]))
+                            trim_qty = int(existing_qty - target_qty)
+                            if trim_qty > 0:
+                                w_pct = (existing_val / eq * 100) if eq > 0 else 0
+                                actions.append((
+                                    sym, "sell", trim_qty,
+                                    f"איזון — מעל יעד (~{w_pct:.0f}% מההון)",
+                                ))
+                                available += trim_qty * r["price"]
+                                self._trailing_stops.pop(sym, None)
+                                closed_syms.add(sym)
                         continue
                     qty = max(1, int(alloc_per / r["price"]))
                     cost = qty * r["price"]
@@ -538,6 +572,7 @@ class AgentSession:
                 cost = price * qty
             self.cash -= cost
             pos = self.positions.get(symbol, {"qty": 0, "avg_cost": 0, "opened": date})
+            prev_qty = float(pos["qty"])
             old_qty = pos["qty"]
             old_avg = pos["avg_cost"]
             if old_qty < 0:
@@ -551,9 +586,15 @@ class AgentSession:
             if qty > 0:
                 new_qty = old_qty + qty
                 new_avg = ((old_avg * old_qty) + (price * qty)) / new_qty if new_qty > 0 else price
-                self.positions[symbol] = {"qty": new_qty, "avg_cost": new_avg, "opened": pos.get("opened", date)}
+                if new_qty > 0:
+                    opened_eff = pos.get("opened", date) if prev_qty > 0 else date
+                elif new_qty < 0:
+                    opened_eff = pos.get("opened", date) if prev_qty < 0 else date
+                else:
+                    opened_eff = date
+                self.positions[symbol] = {"qty": new_qty, "avg_cost": new_avg, "opened": opened_eff}
             elif old_qty != 0:
-                self.positions[symbol] = {"qty": old_qty, "avg_cost": old_avg}
+                self.positions[symbol] = {"qty": old_qty, "avg_cost": old_avg, "opened": pos.get("opened", date)}
             else:
                 self.positions.pop(symbol, None)
             self.trades.append({
@@ -591,6 +632,7 @@ class AgentSession:
                     return
             self.cash += price * qty
             pos = self.positions.get(symbol, {"qty": 0, "avg_cost": 0, "opened": date})
+            prev_qty = float(pos["qty"])
             old_qty = pos["qty"]
             if old_qty > 0:
                 sell_qty = min(qty, int(old_qty))
@@ -606,7 +648,10 @@ class AgentSession:
                 ca = cur_short["avg_cost"]
                 new_qty = cq - qty
                 new_avg = ((abs(cq) * ca) + (qty * price)) / abs(new_qty) if new_qty != 0 else price
-                self.positions[symbol] = {"qty": new_qty, "avg_cost": new_avg, "opened": cur_short.get("opened", date)}
+                opened_eff = (
+                    cur_short.get("opened", date) if prev_qty < 0 and new_qty < 0 else date
+                )
+                self.positions[symbol] = {"qty": new_qty, "avg_cost": new_avg, "opened": opened_eff}
             self.trades.append({
                 "step": self.step, "date": date, "symbol": symbol,
                 "action": "short", "price": round(price, 2), "qty": qty,
@@ -634,6 +679,79 @@ class AgentSession:
                 "reason": reason,
             })
 
+    def _apply_broker_positions(self, pos_list: list[dict[str, Any]], prev: dict[str, dict[str, Any]]) -> None:
+        """Merge Alpaca positions into self.positions, preserving opened when direction unchanged."""
+        self.positions = {}
+        for p in pos_list:
+            sym = str(p["symbol"])
+            nq = float(p["qty"])
+            pr = prev.get(sym, {})
+            pq = float(pr.get("qty", 0))
+            op = str(pr.get("opened", "") or "")
+            if pq * nq > 0:
+                opened = op
+            elif nq == 0:
+                opened = ""
+            else:
+                opened = ""
+            self.positions[sym] = {
+                "qty": nq,
+                "avg_cost": float(p["avg_cost"]),
+                "opened": opened,
+            }
+
+    def _live_cap_order_qty(
+        self,
+        acct: dict[str, Any],
+        est_px: float,
+        symbol: str,
+        requested: int,
+        side: str,
+    ) -> int:
+        """Limit LLM size vs buying power and current long size (Alpaca side buy/sell)."""
+        if est_px <= 0 or requested <= 0:
+            return 0
+        bp = float(acct.get("buying_power_usd", 0) or 0)
+        sym = symbol.upper()
+        cur = self.positions.get(sym, {})
+        cur_q = float(cur.get("qty", 0))
+        if side == "buy":
+            max_q = int(max(0, bp * 0.95 / est_px))
+            return max(0, min(int(requested), max_q))
+        if cur_q > 0:
+            return max(0, min(int(requested), int(cur_q)))
+        margin_per = est_px * 0.5
+        if margin_per <= 0:
+            return 0
+        max_q = int(max(0, bp * 0.9 / margin_per))
+        return max(0, min(int(requested), max_q))
+
+    def _live_resync_from_broker(
+        self,
+        broker: Any,
+        *,
+        qty_baseline: dict[str, float] | None,
+    ) -> None:
+        """Refresh cash/positions. If qty_baseline is set (pre-order snapshot), poll until it differs or cap."""
+        import time
+
+        prev = dict(self.positions)
+        attempts = 10 if qty_baseline is not None else 1
+        baseline = qty_baseline or {}
+        for i in range(attempts):
+            if i > 0:
+                time.sleep(0.25)
+            acct = broker.get_account() or {}
+            if acct:
+                self.cash = acct.get("cash_usd", self.cash)
+            pos_list = broker.positions()
+            cur = {p["symbol"]: float(p["qty"]) for p in pos_list}
+            changed = any(abs(cur.get(k, 0) - baseline.get(k, 0)) > 1e-6 for k in set(cur) | set(baseline))
+            self._apply_broker_positions(pos_list, prev)
+            prev = dict(self.positions)
+            if qty_baseline is None or changed or i == attempts - 1:
+                break
+
     def _tick_live(self) -> dict[str, Any]:
         self._request_news_refresh_async()
 
@@ -660,15 +778,16 @@ class AgentSession:
             self.step += 1
             return self.status()
 
+        acct_live: dict[str, Any] = {}
+        qty_baseline: dict[str, float] = {}
         try:
-            acct = broker.get_account()
-            if acct:
-                self.cash = acct.get("cash_usd", self.cash)
+            acct_live = broker.get_account() or {}
+            if acct_live:
+                self.cash = acct_live.get("cash_usd", self.cash)
             pos_list = broker.positions()
-            self.positions = {}
-            for p in pos_list:
-                sym = p["symbol"]
-                self.positions[sym] = {"qty": float(p["qty"]), "avg_cost": float(p["avg_cost"])}
+            prev_state = dict(self.positions)
+            qty_baseline = {p["symbol"]: float(p["qty"]) for p in pos_list}
+            self._apply_broker_positions(pos_list, prev_state)
         except Exception as e:
             log.warning("Pre-tick Alpaca sync failed: %s", e)
 
@@ -681,47 +800,77 @@ class AgentSession:
             return self.status()
 
         from aibroker.brokers.base import OrderIntent
+
+        had_submitted_ok = False
         for act in decision.actions:
             side = act.action
             if side == "short":
                 side = "sell"
             elif side == "cover":
                 side = "buy"
-            if side in ("buy", "sell") and act.quantity > 0:
-                intent = OrderIntent(
-                    symbol=act.symbol,
-                    side=side,
-                    quantity=act.quantity,
-                )
-                result = broker.place_order(intent)
-                log.info("Order result: %s", result)
+            if side not in ("buy", "sell") or act.quantity <= 0:
+                continue
+            est = broker.estimate_fill_price(act.symbol, side)
+            qty_cap = self._live_cap_order_qty(
+                acct_live, est, act.symbol, int(act.quantity), side,
+            )
+            if qty_cap <= 0:
+                log.warning("Order skipped after risk cap: %s %s", act.symbol, act.action)
                 self.trades.append({
                     "step": self.step,
-                    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                    "date": _agent_trade_timestamp(),
                     "symbol": act.symbol,
                     "action": act.action,
                     "price": 0,
-                    "qty": act.quantity,
+                    "qty": int(act.quantity),
                     "reason": act.reason,
-                    "broker_ok": result.ok,
-                    "broker_msg": result.message,
+                    "broker_ok": False,
+                    "broker_msg": "כמות אפס אחרי תקרת כוח קנייה / מחיר משוער",
                 })
+                continue
+            intent = OrderIntent(
+                symbol=act.symbol,
+                side=side,
+                quantity=float(qty_cap),
+            )
+            result = broker.place_order(intent)
+            log.info("Order result: %s", result)
+            fill = {"status": "none", "filled_avg_price": 0.0, "filled_qty": 0}
+            if result.ok:
+                had_submitted_ok = True
+                try:
+                    acct_live = broker.get_account() or acct_live
+                except Exception:
+                    pass
+                if result.broker_order_id:
+                    fill = broker.poll_order_fill(result.broker_order_id)
+            px = float(fill.get("filled_avg_price") or 0.0)
+            fq = int(fill.get("filled_qty") or 0)
+            self.trades.append({
+                "step": self.step,
+                "date": _agent_trade_timestamp(),
+                "symbol": act.symbol,
+                "action": act.action,
+                "price": round(px, 4) if px > 0 else 0,
+                "qty": fq if fq > 0 else qty_cap,
+                "reason": act.reason,
+                "broker_ok": result.ok,
+                "broker_msg": result.message,
+                "order_status": str(fill.get("status", "")),
+                "fill_pending": bool(result.ok and px <= 0),
+            })
 
         try:
-            acct = broker.get_account()
-            if acct:
-                self.cash = acct.get("cash_usd", self.cash)
-            pos_list = broker.positions()
-            self.positions = {}
-            for p in pos_list:
-                sym = p["symbol"]
-                self.positions[sym] = {"qty": float(p["qty"]), "avg_cost": float(p["avg_cost"])}
+            self._live_resync_from_broker(
+                broker,
+                qty_baseline=qty_baseline if had_submitted_ok else None,
+            )
         except Exception as e:
             log.warning("Failed to sync account: %s", e)
 
         self.decisions.append({
             "step": self.step,
-            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            "date": _agent_trade_timestamp(),
             **decision.to_dict(),
         })
         self.step += 1

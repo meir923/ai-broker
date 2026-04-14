@@ -11,7 +11,7 @@ from aibroker.brokers.base import BrokerClient, OrderIntent, OrderResult
 
 log = logging.getLogger(__name__)
 
-_quote_cache: dict[str, tuple[float, float]] = {}
+_quote_book_cache: dict[str, tuple[float, float, float, float]] = {}
 _QUOTE_TTL = 4.0
 
 _hist_data_client: Any = None
@@ -45,21 +45,21 @@ def _get_stock_historical_client() -> Any | None:
     return _hist_data_client
 
 
-def fetch_alpaca_quotes(symbols: list[str]) -> dict[str, float]:
-    """Fetch latest ask/bid midpoint for symbols. Returns {SYM: price}. Cached briefly."""
+def fetch_alpaca_quote_book(symbols: list[str]) -> dict[str, dict[str, float]]:
+    """Latest bid / ask / mid per symbol. Long marks conservative at bid, shorts at ask."""
     api_key, secret_key = _alpaca_keys()
     if not api_key or not secret_key:
         return {}
 
     now = time.monotonic()
     needed: list[str] = []
-    result: dict[str, float] = {}
+    result: dict[str, dict[str, float]] = {}
     for s in symbols:
         s = s.upper()
-        if s in _quote_cache:
-            ts, px = _quote_cache[s]
+        if s in _quote_book_cache:
+            ts, bid, ask, mid = _quote_book_cache[s]
             if now - ts < _QUOTE_TTL:
-                result[s] = px
+                result[s] = {"bid": bid, "ask": ask, "mid": mid}
                 continue
         needed.append(s)
 
@@ -79,20 +79,28 @@ def fetch_alpaca_quotes(symbols: list[str]) -> dict[str, float]:
             ask = float(q.ask_price) if q.ask_price else 0.0
             bid = float(q.bid_price) if q.bid_price else 0.0
             if ask > 0 and bid > 0:
-                px = round((ask + bid) / 2.0, 4)
+                mid = round((ask + bid) / 2.0, 4)
             elif ask > 0:
-                px = ask
+                bid = ask
+                mid = ask
             elif bid > 0:
-                px = bid
+                ask = bid
+                mid = bid
             else:
                 continue
             sym_u = str(sym).upper()
-            _quote_cache[sym_u] = (now, px)
-            result[sym_u] = px
+            _quote_book_cache[sym_u] = (now, bid, ask, mid)
+            result[sym_u] = {"bid": bid, "ask": ask, "mid": mid}
     except Exception as exc:
         log.warning("Alpaca quote fetch failed: %s", exc)
 
     return result
+
+
+def fetch_alpaca_quotes(symbols: list[str]) -> dict[str, float]:
+    """Midpoint quotes (backward compatible). Prefer fetch_alpaca_quote_book for bid/ask."""
+    book = fetch_alpaca_quote_book(symbols)
+    return {k: v["mid"] for k, v in book.items()}
 
 
 class AlpacaBrokerClient(BrokerClient):
@@ -237,6 +245,56 @@ class AlpacaBrokerClient(BrokerClient):
         except Exception as exc:
             log.error("Alpaca order failed: %s", exc)
             return OrderResult(ok=False, message=str(exc))
+
+    def estimate_fill_price(self, symbol: str, side: str) -> float:
+        """Conservative notional estimate: buys near ask, sells near bid (spread-aware)."""
+        sym = symbol.upper()
+        book = fetch_alpaca_quote_book([sym])
+        b = book.get(sym, {})
+        ask = float(b.get("ask", 0) or 0)
+        bid = float(b.get("bid", 0) or 0)
+        mid = float(b.get("mid", 0) or 0)
+        if side == "buy":
+            px = ask or mid or self._get_current_price(symbol)
+        else:
+            px = bid or mid or self._get_current_price(symbol)
+        return float(px or 0.0)
+
+    def poll_order_fill(
+        self,
+        order_id: str,
+        *,
+        timeout_s: float = 6.0,
+        interval_s: float = 0.25,
+    ) -> dict[str, Any]:
+        """Poll order until filled/partial/canceled or timeout. Returns status and fill prices."""
+        if self._trading_client is None:
+            return {"status": "error", "filled_avg_price": 0.0, "filled_qty": 0, "raw": {}}
+        import time
+
+        deadline = time.monotonic() + timeout_s
+        last: dict[str, Any] = {"status": "timeout", "filled_avg_price": 0.0, "filled_qty": 0, "raw": {}}
+        while time.monotonic() < deadline:
+            try:
+                o = self._trading_client.get_order_by_id(order_id)
+                st_raw = str(getattr(o, "status", ""))
+                st = st_raw.lower()
+                fap = float(getattr(o, "filled_avg_price", None) or 0.0)
+                fqty = float(getattr(o, "filled_qty", None) or 0.0)
+                last = {
+                    "status": st_raw,
+                    "filled_avg_price": fap,
+                    "filled_qty": int(fqty),
+                    "raw": {"status": st_raw},
+                }
+                if fap > 0:
+                    return last
+                if any(x in st for x in ("cancel", "reject", "expired", "done_for_day")):
+                    return last
+            except Exception as e:
+                log.warning("poll_order_fill: %s", e)
+            time.sleep(interval_s)
+        return last
 
     def _get_current_price(self, symbol: str) -> float:
         try:

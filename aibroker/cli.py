@@ -152,6 +152,7 @@ def _cmd_web(args: argparse.Namespace) -> None:
                 f"\nהפורט {port} תפוס. נסה: aibroker web --auto-port\n",
                 file=sys.stderr,
             )
+            sys.exit(1)
         raise
 
 

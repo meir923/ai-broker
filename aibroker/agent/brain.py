@@ -11,6 +11,36 @@ from aibroker.llm.grok import GrokClient
 log = logging.getLogger(__name__)
 
 
+def _safe_int_quantity(raw: object) -> int:
+    """Parse LLM quantity without crashing on strings like '50%%' or 'all'."""
+    if raw is None:
+        return 0
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        if raw != raw:  # NaN
+            return 0
+        return int(raw)
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if not s or s in ("all", "max", "full", "none"):
+            return 0
+        s = s.rstrip("%").strip()
+        try:
+            n = float(s)
+            return int(n)
+        except ValueError:
+            log.warning("Unparseable quantity from LLM: %r", raw)
+            return 0
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        log.warning("Unparseable quantity from LLM: %r", raw)
+        return 0
+
+
 class AgentAction:
     __slots__ = ("symbol", "action", "quantity", "reason")
 
@@ -74,7 +104,7 @@ def _parse_actions(
     for a in actions_raw:
         sym = str(a.get("symbol", "")).upper()
         act = str(a.get("action", "hold")).lower()
-        qty = int(a.get("quantity", 0))
+        qty = _safe_int_quantity(a.get("quantity", 0))
         reason = str(a.get("reason", ""))
         if act not in ("buy", "sell", "hold", "short", "cover"):
             act = "hold"
