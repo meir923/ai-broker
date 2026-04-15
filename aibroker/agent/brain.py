@@ -70,7 +70,10 @@ class AgentAction:
 
 
 class AgentDecision:
-    __slots__ = ("actions", "market_view", "risk_note", "regime", "raw")
+    __slots__ = (
+        "actions", "market_view", "risk_note", "regime", "raw",
+        "aggression", "cash_bias", "avoid_symbols", "priority_symbols",
+    )
 
     def __init__(
         self,
@@ -79,12 +82,20 @@ class AgentDecision:
         risk_note: str,
         raw: dict[str, Any],
         regime: str = "",
+        aggression: str = "normal",
+        cash_bias: str = "hold",
+        avoid_symbols: list[str] | None = None,
+        priority_symbols: list[str] | None = None,
     ):
         self.actions = actions
         self.market_view = market_view
         self.risk_note = risk_note
         self.regime = regime
         self.raw = raw
+        self.aggression = aggression if aggression in ("conservative", "normal", "aggressive") else "normal"
+        self.cash_bias = cash_bias if cash_bias in ("deploy", "hold", "raise") else "hold"
+        self.avoid_symbols = [s.upper() for s in (avoid_symbols or [])]
+        self.priority_symbols = [s.upper() for s in (priority_symbols or [])]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,7 +103,27 @@ class AgentDecision:
             "market_view": self.market_view,
             "risk_note": self.risk_note,
             "regime": self.regime,
+            "aggression": self.aggression,
+            "cash_bias": self.cash_bias,
+            "avoid_symbols": self.avoid_symbols,
+            "priority_symbols": self.priority_symbols,
         }
+
+
+def _parse_meta(resp: dict[str, Any]) -> dict[str, Any]:
+    """Extract meta-strategy fields from Grok response."""
+    avoid = resp.get("avoid_symbols") or []
+    if not isinstance(avoid, list):
+        avoid = []
+    priority = resp.get("priority_symbols") or []
+    if not isinstance(priority, list):
+        priority = []
+    return {
+        "aggression": str(resp.get("aggression", "normal")).lower(),
+        "cash_bias": str(resp.get("cash_bias", "hold")).lower(),
+        "avoid_symbols": [str(s) for s in avoid if s],
+        "priority_symbols": [str(s) for s in priority if s],
+    }
 
 
 def _get_grok():
@@ -214,6 +245,7 @@ def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) ->
         resp = grok.chat_json(SYSTEM_PROMPT, user_msg)
         log.info("Grok response: %s", resp)
 
+        meta = _parse_meta(resp)
         actions, rejected = _parse_actions(resp, allowed_symbols)
         if actions or not rejected or attempt == 1:
             return AgentDecision(
@@ -222,6 +254,7 @@ def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) ->
                 risk_note=str(resp.get("risk_note", "")),
                 raw=resp,
                 regime=str(resp.get("regime", "")),
+                **meta,
             )
         allow_txt = ", ".join(allowed_symbols or [])
         bad = ", ".join(sorted(rejected))
@@ -230,12 +263,14 @@ def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) ->
             f"המותרים בלבד: {allow_txt}. החזר JSON תקין רק עם סימבולים מותרים וכמויות חיוביות."
         )
 
+    meta = _parse_meta(resp)
     return AgentDecision(
         actions=[],
         market_view=str(resp.get("market_view", "")),
         risk_note=str(resp.get("risk_note", "")),
         raw=resp,
         regime=str(resp.get("regime", "")),
+        **meta,
     )
 
 

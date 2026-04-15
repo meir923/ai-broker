@@ -8,6 +8,7 @@ from aibroker.agent.brain import (
     AgentAction,
     AgentDecision,
     _parse_actions,
+    _parse_meta,
     _safe_int_quantity,
     prepare_candidates,
     assess_market_regime,
@@ -150,6 +151,10 @@ class TestAgentModels:
         assert len(d["actions"]) == 1
         assert d["market_view"] == "bullish"
         assert "regime" in d
+        assert "aggression" in d
+        assert "cash_bias" in d
+        assert "avoid_symbols" in d
+        assert "priority_symbols" in d
 
     def test_decision_regime_field(self):
         dec = AgentDecision([], "neutral", "", {}, regime="bearish")
@@ -160,6 +165,73 @@ class TestAgentModels:
         dec = AgentDecision([], "", "", {})
         assert dec.to_dict()["actions"] == []
         assert dec.regime == ""
+
+    def test_decision_meta_defaults(self):
+        dec = AgentDecision([], "", "", {})
+        assert dec.aggression == "normal"
+        assert dec.cash_bias == "hold"
+        assert dec.avoid_symbols == []
+        assert dec.priority_symbols == []
+
+    def test_decision_meta_fields(self):
+        dec = AgentDecision(
+            [], "", "", {},
+            aggression="aggressive",
+            cash_bias="raise",
+            avoid_symbols=["TSLA", "gme"],
+            priority_symbols=["aapl"],
+        )
+        assert dec.aggression == "aggressive"
+        assert dec.cash_bias == "raise"
+        assert dec.avoid_symbols == ["TSLA", "GME"]
+        assert dec.priority_symbols == ["AAPL"]
+        d = dec.to_dict()
+        assert d["aggression"] == "aggressive"
+        assert d["cash_bias"] == "raise"
+        assert d["avoid_symbols"] == ["TSLA", "GME"]
+        assert d["priority_symbols"] == ["AAPL"]
+
+    def test_decision_invalid_meta_falls_back(self):
+        dec = AgentDecision([], "", "", {}, aggression="yolo", cash_bias="moon")
+        assert dec.aggression == "normal"
+        assert dec.cash_bias == "hold"
+
+
+# ── _parse_meta ──────────────────────────────────────────────────────────
+
+class TestParseMeta:
+    def test_full_response(self):
+        resp = {
+            "aggression": "aggressive",
+            "cash_bias": "deploy",
+            "avoid_symbols": ["TSLA"],
+            "priority_symbols": ["NVDA", "AAPL"],
+        }
+        m = _parse_meta(resp)
+        assert m["aggression"] == "aggressive"
+        assert m["cash_bias"] == "deploy"
+        assert m["avoid_symbols"] == ["TSLA"]
+        assert m["priority_symbols"] == ["NVDA", "AAPL"]
+
+    def test_empty_response(self):
+        m = _parse_meta({})
+        assert m["aggression"] == "normal"
+        assert m["cash_bias"] == "hold"
+        assert m["avoid_symbols"] == []
+        assert m["priority_symbols"] == []
+
+    def test_non_list_avoid(self):
+        m = _parse_meta({"avoid_symbols": "TSLA"})
+        assert m["avoid_symbols"] == []
+
+    def test_none_values(self):
+        m = _parse_meta({"avoid_symbols": None, "priority_symbols": None})
+        assert m["avoid_symbols"] == []
+        assert m["priority_symbols"] == []
+
+    def test_filters_empty_strings(self):
+        m = _parse_meta({"avoid_symbols": ["", "TSLA", ""]})
+        assert m["avoid_symbols"] == ["TSLA"]
 
 
 # ── prepare_candidates ───────────────────────────────────────────────────

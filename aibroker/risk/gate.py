@@ -13,6 +13,17 @@ class RiskDecision:
     reason: str
 
 
+def _estimate_notional(state: RuntimeState, symbol: str, quantity: float) -> float | None:
+    """Best-effort notional estimate from state when caller didn't provide one."""
+    sym = symbol.strip().upper()
+    for p in state.positions:
+        if str(p.get("symbol", "")).upper() == sym:
+            px = float(p.get("current_price", 0) or p.get("avg_entry_price", 0) or 0)
+            if px > 0:
+                return abs(quantity) * px
+    return None
+
+
 def evaluate_intent(
     cfg: AppConfig,
     state: RuntimeState,
@@ -33,13 +44,18 @@ def evaluate_intent(
         return RiskDecision(False, "max_trades_per_day reached")
     if state.daily_pnl_usd <= -cfg.risk.max_daily_loss_usd:
         return RiskDecision(False, "max_daily_loss_usd breached")
-    if estimated_notional_usd is not None and estimated_notional_usd > cfg.risk.max_notional_per_trade_usd:
+
+    notional = estimated_notional_usd
+    if notional is None and intent.quantity and intent.quantity > 0:
+        notional = _estimate_notional(state, sym, intent.quantity)
+
+    if notional is not None and notional > cfg.risk.max_notional_per_trade_usd:
         return RiskDecision(False, "max_notional_per_trade_usd exceeded")
 
-    if estimated_notional_usd is not None and state.equity_usd > 0:
+    if notional is not None and state.equity_usd > 0:
         max_exp_pct = cfg.risk.max_position_exposure_pct
         existing = _position_notional(state, sym)
-        new_total = existing + estimated_notional_usd
+        new_total = existing + notional
         exposure_pct = new_total / state.equity_usd * 100
         if exposure_pct > max_exp_pct:
             return RiskDecision(False, f"position exposure {exposure_pct:.1f}% > {max_exp_pct}%")

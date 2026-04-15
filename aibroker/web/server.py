@@ -264,11 +264,11 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
                     {"id": "config", "name": "קונפיגורציה", "status": "ready", "note": "YAML + Pydantic"},
                     {"id": "data", "name": "נתוני שוק", "status": "ready", "note": "Alpha Vantage OHLC + Alpaca live quotes"},
                     {"id": "news", "name": "חדשות", "status": "ready", "note": "RSS + Grok Sentiment"},
-                    {"id": "strategies", "name": "אסטרטגיות", "status": "ready", "note": "SMA Crossover · Momentum · Mean Reversion · Scalper"},
+                    {"id": "strategies", "name": "אסטרטגיות", "status": "ready", "note": "Two-Tier: algorithmic screener + Grok analyst | legacy stubs deprecated"},
                     {"id": "risk", "name": "ריסק", "status": "ready", "note": "שער לפני ביצוע"},
                     {"id": "brokers", "name": "ברוקרים", "status": "ready", "note": "Alpaca Paper (מלא) + IBKR (חיבור)"},
-                    {"id": "runner", "name": "Runner", "status": "ready", "note": "צעד יבש"},
-                    {"id": "llm", "name": "Grok / LLM", "status": "partial", "note": "לקוח API + צ'אט CLI"},
+                    {"id": "runner", "name": "Runner", "status": "deprecated", "note": "run_once() — deprecated, use AgentSession"},
+                    {"id": "llm", "name": "Grok / LLM", "status": "ready", "note": "Chief Analyst: trading + sentiment + macro + chat"},
                     {"id": "web", "name": "לוח בקרה", "status": "ready", "note": "ממשק דפדפן מקומי + נייר אוטונומי"},
                 ]
             }

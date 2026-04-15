@@ -537,10 +537,20 @@ class AgentSession:
             self.step += 1
             return self.status()
 
+        avoid_set = {s.upper() for s in decision.avoid_symbols}
+        agg = decision.aggression
+        agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
+
         for act in decision.actions:
-            if not self._sim_risk_allows(act.symbol, act.action, act.quantity):
+            if act.symbol.upper() in avoid_set:
+                log.info("Skipping %s %s — in avoid_symbols", act.action, act.symbol)
                 continue
-            self._execute_sim(act.symbol, act.action, act.quantity, act.reason, sim_date)
+            qty = act.quantity
+            if agg_mult != 1.0 and act.action in ("buy", "short"):
+                qty = max(1, int(qty * agg_mult))
+            if not self._sim_risk_allows(act.symbol, act.action, qty):
+                continue
+            self._execute_sim(act.symbol, act.action, qty, act.reason, sim_date)
 
         self.decisions.append({
             "step": self.step,
@@ -567,15 +577,19 @@ class AgentSession:
             return list(self._news_cache)
 
     def _sim_risk_allows(self, symbol: str, action: str, qty: int) -> bool:
-        """Enforce risk limits in simulation: drawdown cap, per-symbol exposure."""
-        eq = self.equity()
+        """Enforce risk limits in simulation: drawdown cap, per-symbol exposure.
 
-        max_dd_pct = {"low": 0.25, "medium": 0.40, "high": 0.55}.get(self.risk_level, 0.40)
+        Reads thresholds from RISK_PROFILES (single source of truth).
+        """
+        eq = self.equity()
+        rp = RISK_PROFILES.get(self.risk_level, RISK_PROFILES["medium"])
+
+        max_dd_pct = float(rp.get("max_drawdown_pct", 0.40))
         if eq < self.initial_deposit * (1 - max_dd_pct):
             log.debug("Risk gate blocked %s %s: drawdown > %d%%", action, symbol, int(max_dd_pct * 100))
             return False
 
-        max_sym_pct = {"low": 0.25, "medium": 0.35, "high": 0.45}.get(self.risk_level, 0.35)
+        max_sym_pct = float(rp.get("max_symbol_exposure_pct", 0.35))
         if action in ("buy", "short") and eq > 0:
             price = self._next_bar_open(symbol)
             if price > 0:
@@ -854,8 +868,15 @@ class AgentSession:
 
         from aibroker.brokers.base import OrderIntent
 
+        avoid_set = {s.upper() for s in decision.avoid_symbols}
+        agg = decision.aggression
+        agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
+
         had_submitted_ok = False
         for act in decision.actions:
+            if act.symbol.upper() in avoid_set:
+                log.info("Live: skipping %s %s — in avoid_symbols", act.action, act.symbol)
+                continue
             side = act.action
             if side == "short":
                 side = "sell"
@@ -863,9 +884,12 @@ class AgentSession:
                 side = "buy"
             if side not in ("buy", "sell") or act.quantity <= 0:
                 continue
+            raw_qty = act.quantity
+            if agg_mult != 1.0 and act.action in ("buy", "short"):
+                raw_qty = max(1, int(raw_qty * agg_mult))
             est = broker.estimate_fill_price(act.symbol, side)
             qty_cap = self._live_cap_order_qty(
-                acct_live, est, act.symbol, int(act.quantity), side,
+                acct_live, est, act.symbol, int(raw_qty), side,
             )
             if qty_cap <= 0:
                 log.warning("Order skipped after risk cap: %s %s", act.symbol, act.action)

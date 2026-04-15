@@ -310,35 +310,46 @@ class SwingPortfolioManager:
         self._get_meta(sym.upper()).entry_px = float(px)
 
 
-# ---- Legacy compat aliases ---------------------
+# ---- Deprecated legacy aliases ----
+# These exist only for backward compatibility with tests and imports.
+# The real trading engine lives in agent/loop.py (_tick_sim / _tick_live).
+
+import warnings as _warnings
 
 StrategyPicker = SwingPortfolioManager
 
 
-class SMAStrategy:
+class _DeprecatedStub:
+    """Stub strategy that returns no signals. Do not use for new code."""
+
+    def evaluate(self, *a: Any, **kw: Any) -> None:
+        return None
+
+
+class SMAStrategy(_DeprecatedStub):
     name = "sma_crossover"
-    def evaluate(self, *a: Any, **kw: Any) -> None:
-        return None
 
 
-class MomentumStrategy:
+class MomentumStrategy(_DeprecatedStub):
     name = "momentum"
-    def evaluate(self, *a: Any, **kw: Any) -> None:
-        return None
 
 
-class MeanReversionStrategy:
+class MeanReversionStrategy(_DeprecatedStub):
     name = "mean_reversion"
-    def evaluate(self, *a: Any, **kw: Any) -> None:
-        return None
 
 
-class ScalperStrategy:
+class ScalperStrategy(_DeprecatedStub):
     name = "scalper"
-    def evaluate(self, *a: Any, **kw: Any) -> None:
-        return None
 
 
 class SimpleRulesStrategy:
+    """Deprecated: returns no signals. Use AgentSession instead."""
+
     def generate_signals(self, cfg: Any, state: Any) -> list:
+        _warnings.warn(
+            "SimpleRulesStrategy.generate_signals() always returns []. "
+            "Use AgentSession._tick_sim() for actual trading.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return []

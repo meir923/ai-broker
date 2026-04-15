@@ -22,6 +22,8 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "rebalance_trim_above": 1.5,
         "leverage": 2.0,
         "margin_rate": 0.50,
+        "max_drawdown_pct": 0.25,
+        "max_symbol_exposure_pct": 0.25,
     },
     "medium": {
         "target_positions": 7,
@@ -40,6 +42,8 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "rebalance_trim_above": 1.4,
         "leverage": 3.0,
         "margin_rate": 0.34,
+        "max_drawdown_pct": 0.40,
+        "max_symbol_exposure_pct": 0.35,
     },
     "high": {
         "target_positions": 8,
@@ -58,5 +62,7 @@ RISK_PROFILES: dict[str, dict[str, Any]] = {
         "rebalance_trim_above": 1.3,
         "leverage": 4.0,
         "margin_rate": 0.25,
+        "max_drawdown_pct": 0.55,
+        "max_symbol_exposure_pct": 0.45,
     },
 }

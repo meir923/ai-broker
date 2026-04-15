@@ -101,7 +101,8 @@ class TestPrompts:
         result = format_user_prompt(snapshot)
         assert "מוגברת" in result or "high" in result.lower() or "30%" in result
 
-    def test_format_warns_few_positions(self):
+    def test_format_no_forced_activity_warning(self):
+        """Prompt should NOT force user to open positions — no WARNING/MUST."""
         snapshot = {
             "clock": {"ny_time": "10:00", "il_time": "17:00", "status": "OPEN"},
             "date": "2024-06-01",
@@ -112,7 +113,8 @@ class TestPrompts:
             "news": [],
         }
         result = format_user_prompt(snapshot)
-        assert "WARNING" in result or "MUST" in result
+        assert "MUST" not in result
+        assert "Open positions: 1" in result
 
     def test_format_with_news(self):
         snapshot = {
@@ -137,6 +139,22 @@ class TestPrompts:
         }
         result = format_user_prompt(snapshot)
         assert "BEARISH" in result
+
+    def test_system_prompt_no_forced_activity(self):
+        """SYSTEM_PROMPT must not contain rules forcing activity."""
+        forbidden = [
+            "חובה פעולות על לפחות",
+            "חובה לפתוח חדשות מיד",
+            "חובה לפתוח פוזיציות",
+            "שמור 5-8 פוזיציות",
+        ]
+        for phrase in forbidden:
+            assert phrase not in SYSTEM_PROMPT, f"Found forbidden phrase: {phrase}"
+
+    def test_system_prompt_has_meta_fields(self):
+        """SYSTEM_PROMPT should request meta-strategy fields."""
+        for field in ["aggression", "cash_bias", "avoid_symbols", "priority_symbols"]:
+            assert field in SYSTEM_PROMPT, f"Missing meta field in prompt: {field}"
 
     def test_format_with_candidates(self):
         snapshot = {

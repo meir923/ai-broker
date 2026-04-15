@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 
 from aibroker.brokers.factory import make_broker
 from aibroker.config.schema import AppConfig
@@ -12,6 +13,13 @@ log = logging.getLogger(__name__)
 
 
 def run_once(cfg: AppConfig, *, connect_broker: bool = False) -> None:
+    """Deprecated: SimpleRulesStrategy always returns []. Use AgentSession instead."""
+    warnings.warn(
+        "run_once() relies on SimpleRulesStrategy which produces no signals. "
+        "Use AgentSession (agent/loop.py) for actual trading.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     state = RuntimeState(
         profile_name=cfg.profile_name,
