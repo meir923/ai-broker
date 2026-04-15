@@ -16,7 +16,7 @@ from aibroker.agent.fast_strategy import (
     rank_symbols,
     detect_bear_regime,
 )
-from aibroker.llm.grok import GrokClient
+from aibroker.llm.grok import get_trading_client, get_macro_client
 
 log = logging.getLogger(__name__)
 
@@ -95,14 +95,9 @@ class AgentDecision:
         }
 
 
-_grok: GrokClient | None = None
-
-
-def _get_grok() -> GrokClient:
-    global _grok
-    if _grok is None:
-        _grok = GrokClient(model="grok-3-mini-fast")
-    return _grok
+def _get_grok():
+    """Get the trading-specific Grok client."""
+    return get_trading_client()
 
 
 def _parse_actions(
@@ -265,7 +260,7 @@ def assess_market_regime(
     if not news_headlines:
         return "neutral"
 
-    grok = _get_grok()
+    grok = get_macro_client()
     titles = [h.get("title", "") for h in news_headlines[:20] if h.get("title")]
     if not titles:
         return "neutral"

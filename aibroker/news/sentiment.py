@@ -87,8 +87,8 @@ def score_symbol_sentiment(
 
     if grok_client is None:
         try:
-            from aibroker.llm.grok import GrokClient
-            grok_client = GrokClient()
+            from aibroker.llm.grok import get_sentiment_client
+            grok_client = get_sentiment_client()
         except Exception:
             log.warning("Cannot create GrokClient — returning neutral sentiment")
             return neutral

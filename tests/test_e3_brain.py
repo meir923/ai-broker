@@ -233,7 +233,7 @@ class TestAssessMarketRegime:
     def test_no_titles_returns_neutral(self):
         assert assess_market_regime([{"symbol": "SPY"}]) == "neutral"
 
-    @patch("aibroker.agent.brain._get_grok")
+    @patch("aibroker.agent.brain.get_macro_client")
     def test_calls_grok_and_parses(self, mock_get):
         mock_grok = MagicMock()
         mock_grok.chat_json.return_value = {"regime": "bearish", "confidence": 0.8}
@@ -246,7 +246,7 @@ class TestAssessMarketRegime:
         )
         assert result == "bearish"
 
-    @patch("aibroker.agent.brain._get_grok")
+    @patch("aibroker.agent.brain.get_macro_client")
     def test_caches_per_date(self, mock_get):
         mock_grok = MagicMock()
         mock_grok.chat_json.return_value = {"regime": "bullish", "confidence": 0.9}

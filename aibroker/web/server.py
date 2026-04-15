@@ -678,26 +678,28 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
             _grok_history[:] = _grok_history[-20:]
 
         try:
-            from aibroker.llm.grok import GrokClient
+            from aibroker.llm.grok import get_chat_client
             import httpx
 
-            client = GrokClient()
+            client = get_chat_client()
             payload = {
                 "model": client.model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     *_grok_history,
                 ],
-                "temperature": 0.4,
+                "temperature": client.temperature,
+                "max_tokens": client.max_tokens,
             }
             async with httpx.AsyncClient(timeout=client.timeout_s) as http:
                 r = await http.post(
                     "https://api.x.ai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {client._key}", "Content-Type": "application/json"},
+                    headers=client._headers(),
                     json=payload,
                 )
                 r.raise_for_status()
                 data = r.json()
+                client._track_usage(data)
             reply = data["choices"][0]["message"]["content"]
             _grok_history.append({"role": "assistant", "content": reply})
 
@@ -710,6 +712,11 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
     async def grok_clear_api() -> JSONResponse:
         _grok_history.clear()
         return JSONResponse({"ok": True})
+
+    @app.get("/api/grok/usage")
+    async def grok_usage_api() -> JSONResponse:
+        from aibroker.llm.grok import usage
+        return JSONResponse({"ok": True, **usage.summary()})
 
     # ── Step-once for real-time simulation ──
 

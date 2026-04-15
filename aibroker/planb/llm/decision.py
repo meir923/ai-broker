@@ -63,12 +63,12 @@ def maybe_llm_signal(
         return StrategySignal.NONE, "llm_disabled"
 
     try:
-        from aibroker.llm.grok import GrokClient
+        from aibroker.llm.grok import get_trading_client
     except ImportError:
         return StrategySignal.NONE, "llm_no_client"
 
     try:
-        client = GrokClient()
+        client = get_trading_client()
     except Exception as exc:
         log.warning("Plan B LLM: Grok client init failed: %s", exc)
         return StrategySignal.NONE, "llm_no_key"

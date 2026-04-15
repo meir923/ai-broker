@@ -36,12 +36,12 @@ def build_context_snapshot(cfg: AppConfig, state: RuntimeState) -> dict[str, Any
 
 
 def chat_loop_placeholder(cfg: AppConfig, state: RuntimeState) -> None:
-    from aibroker.llm.grok import GrokClient
+    from aibroker.llm.grok import get_chat_client
 
     if not cfg.grok.chat.enabled:
         print("grok.chat.enabled is false — enable in profile to use chat.")
         return
-    client = GrokClient()
+    client = get_chat_client()
     system = (
         "You are a trading copilot. Explain and analyze only. "
         "Do not claim you executed trades. Reply concisely."
