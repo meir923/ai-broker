@@ -69,10 +69,16 @@ class AgentAction:
         }
 
 
+_VALID_AGGRESSION = ("conservative", "normal", "aggressive")
+_VALID_CASH_BIAS = ("deploy", "hold", "raise")
+_VALID_EXPOSURE_BIAS = ("net_long", "neutral", "net_short", "mostly_cash")
+
+
 class AgentDecision:
     __slots__ = (
         "actions", "market_view", "risk_note", "regime", "raw",
-        "aggression", "cash_bias", "avoid_symbols", "priority_symbols",
+        "aggression", "cash_bias", "cash_target_pct", "exposure_bias",
+        "avoid_symbols", "priority_symbols",
     )
 
     def __init__(
@@ -84,6 +90,8 @@ class AgentDecision:
         regime: str = "",
         aggression: str = "normal",
         cash_bias: str = "hold",
+        cash_target_pct: float = 10.0,
+        exposure_bias: str = "net_long",
         avoid_symbols: list[str] | None = None,
         priority_symbols: list[str] | None = None,
     ):
@@ -92,8 +100,10 @@ class AgentDecision:
         self.risk_note = risk_note
         self.regime = regime
         self.raw = raw
-        self.aggression = aggression if aggression in ("conservative", "normal", "aggressive") else "normal"
-        self.cash_bias = cash_bias if cash_bias in ("deploy", "hold", "raise") else "hold"
+        self.aggression = aggression if aggression in _VALID_AGGRESSION else "normal"
+        self.cash_bias = cash_bias if cash_bias in _VALID_CASH_BIAS else "hold"
+        self.cash_target_pct = max(0.0, min(100.0, float(cash_target_pct)))
+        self.exposure_bias = exposure_bias if exposure_bias in _VALID_EXPOSURE_BIAS else "net_long"
         self.avoid_symbols = [s.upper() for s in (avoid_symbols or [])]
         self.priority_symbols = [s.upper() for s in (priority_symbols or [])]
 
@@ -105,6 +115,8 @@ class AgentDecision:
             "regime": self.regime,
             "aggression": self.aggression,
             "cash_bias": self.cash_bias,
+            "cash_target_pct": self.cash_target_pct,
+            "exposure_bias": self.exposure_bias,
             "avoid_symbols": self.avoid_symbols,
             "priority_symbols": self.priority_symbols,
         }
@@ -118,9 +130,15 @@ def _parse_meta(resp: dict[str, Any]) -> dict[str, Any]:
     priority = resp.get("priority_symbols") or []
     if not isinstance(priority, list):
         priority = []
+    try:
+        cash_target = float(resp.get("cash_target_pct", 10))
+    except (TypeError, ValueError):
+        cash_target = 10.0
     return {
         "aggression": str(resp.get("aggression", "normal")).lower(),
         "cash_bias": str(resp.get("cash_bias", "hold")).lower(),
+        "cash_target_pct": cash_target,
+        "exposure_bias": str(resp.get("exposure_bias", "net_long")).lower(),
         "avoid_symbols": [str(s) for s in avoid if s],
         "priority_symbols": [str(s) for s in priority if s],
     }

@@ -170,6 +170,8 @@ class TestAgentModels:
         dec = AgentDecision([], "", "", {})
         assert dec.aggression == "normal"
         assert dec.cash_bias == "hold"
+        assert dec.cash_target_pct == 10.0
+        assert dec.exposure_bias == "net_long"
         assert dec.avoid_symbols == []
         assert dec.priority_symbols == []
 
@@ -178,23 +180,36 @@ class TestAgentModels:
             [], "", "", {},
             aggression="aggressive",
             cash_bias="raise",
+            cash_target_pct=25.0,
+            exposure_bias="mostly_cash",
             avoid_symbols=["TSLA", "gme"],
             priority_symbols=["aapl"],
         )
         assert dec.aggression == "aggressive"
         assert dec.cash_bias == "raise"
+        assert dec.cash_target_pct == 25.0
+        assert dec.exposure_bias == "mostly_cash"
         assert dec.avoid_symbols == ["TSLA", "GME"]
         assert dec.priority_symbols == ["AAPL"]
         d = dec.to_dict()
         assert d["aggression"] == "aggressive"
         assert d["cash_bias"] == "raise"
+        assert d["cash_target_pct"] == 25.0
+        assert d["exposure_bias"] == "mostly_cash"
         assert d["avoid_symbols"] == ["TSLA", "GME"]
         assert d["priority_symbols"] == ["AAPL"]
 
     def test_decision_invalid_meta_falls_back(self):
-        dec = AgentDecision([], "", "", {}, aggression="yolo", cash_bias="moon")
+        dec = AgentDecision([], "", "", {}, aggression="yolo", cash_bias="moon", exposure_bias="yeet")
         assert dec.aggression == "normal"
         assert dec.cash_bias == "hold"
+        assert dec.exposure_bias == "net_long"
+
+    def test_decision_cash_target_clamped(self):
+        dec = AgentDecision([], "", "", {}, cash_target_pct=150.0)
+        assert dec.cash_target_pct == 100.0
+        dec2 = AgentDecision([], "", "", {}, cash_target_pct=-5.0)
+        assert dec2.cash_target_pct == 0.0
 
 
 # ── _parse_meta ──────────────────────────────────────────────────────────
@@ -204,12 +219,16 @@ class TestParseMeta:
         resp = {
             "aggression": "aggressive",
             "cash_bias": "deploy",
+            "cash_target_pct": 15,
+            "exposure_bias": "neutral",
             "avoid_symbols": ["TSLA"],
             "priority_symbols": ["NVDA", "AAPL"],
         }
         m = _parse_meta(resp)
         assert m["aggression"] == "aggressive"
         assert m["cash_bias"] == "deploy"
+        assert m["cash_target_pct"] == 15.0
+        assert m["exposure_bias"] == "neutral"
         assert m["avoid_symbols"] == ["TSLA"]
         assert m["priority_symbols"] == ["NVDA", "AAPL"]
 
@@ -217,6 +236,8 @@ class TestParseMeta:
         m = _parse_meta({})
         assert m["aggression"] == "normal"
         assert m["cash_bias"] == "hold"
+        assert m["cash_target_pct"] == 10.0
+        assert m["exposure_bias"] == "net_long"
         assert m["avoid_symbols"] == []
         assert m["priority_symbols"] == []
 
@@ -232,6 +253,10 @@ class TestParseMeta:
     def test_filters_empty_strings(self):
         m = _parse_meta({"avoid_symbols": ["", "TSLA", ""]})
         assert m["avoid_symbols"] == ["TSLA"]
+
+    def test_cash_target_non_numeric(self):
+        m = _parse_meta({"cash_target_pct": "not_a_number"})
+        assert m["cash_target_pct"] == 10.0
 
 
 # ── prepare_candidates ───────────────────────────────────────────────────

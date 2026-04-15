@@ -62,6 +62,7 @@ class AgentSession:
         deposit: float = 100_000.0,
         start_date: str | None = None,
         risk_level: RiskLevel = "medium",
+        profile_path: str | None = None,
     ):
         self.mode = mode
         self.symbols = [s.upper() for s in (symbols or DEFAULT_SYMBOLS)]
@@ -74,6 +75,7 @@ class AgentSession:
         self.running = False
         self.error: str | None = None
         self.risk_level: RiskLevel = risk_level if risk_level in RISK_PROFILES else "medium"
+        self._profile_path: str | None = profile_path
 
         self._history: dict[str, list[Bar]] = {}
         self._bar_index = 0
@@ -137,7 +139,9 @@ class AgentSession:
                 from aibroker.brokers.factory import make_broker
                 from aibroker.config.loader import load_profile
 
-                cfg = load_profile()
+                if not self._profile_path:
+                    raise ValueError("no profile_path configured for broker connection")
+                cfg = load_profile(self._profile_path)
                 self._broker = make_broker(cfg)
             except Exception:
                 from aibroker.brokers.alpaca import AlpacaBrokerClient
@@ -541,13 +545,25 @@ class AgentSession:
         agg = decision.aggression
         agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
 
+        eq = self.equity()
+        cash_floor = eq * decision.cash_target_pct / 100.0 if eq > 0 else 0
+
         for act in decision.actions:
             if act.symbol.upper() in avoid_set:
                 log.info("Skipping %s %s — in avoid_symbols", act.action, act.symbol)
                 continue
+            if act.action in ("buy", "short") and decision.exposure_bias == "mostly_cash":
+                log.info("Skipping %s %s — exposure_bias is mostly_cash", act.action, act.symbol)
+                continue
             qty = act.quantity
             if agg_mult != 1.0 and act.action in ("buy", "short"):
                 qty = max(1, int(qty * agg_mult))
+            if act.action == "buy" and self.cash - (qty * self._price_for(act.symbol)) < cash_floor:
+                affordable = max(0, int((self.cash - cash_floor) / max(self._price_for(act.symbol), 1)))
+                if affordable <= 0:
+                    log.info("Skipping buy %s — would breach cash_target_pct %.0f%%", act.symbol, decision.cash_target_pct)
+                    continue
+                qty = affordable
             if not self._sim_risk_allows(act.symbol, act.action, qty):
                 continue
             self._execute_sim(act.symbol, act.action, qty, act.reason, sim_date)
@@ -717,23 +733,47 @@ class AgentSession:
         requested: int,
         side: str,
     ) -> int:
-        """Limit LLM size vs buying power and current long size (Alpaca side buy/sell)."""
+        """Limit LLM size vs buying power, per-symbol exposure, and margin.
+
+        Reads thresholds from RISK_PROFILES (single source of truth).
+        """
         if est_px <= 0 or requested <= 0:
             return 0
         bp = float(acct.get("buying_power_usd", 0) or 0)
         sym = symbol.upper()
         cur = self.positions.get(sym, {})
         cur_q = float(cur.get("qty", 0))
+
+        rp = RISK_PROFILES.get(self.risk_level, RISK_PROFILES["medium"])
+        max_sym_pct = float(rp.get("max_symbol_exposure_pct", 0.35))
+
+        eq = float(acct.get("equity_usd", 0) or 0)
+        if eq <= 0:
+            eq = self.equity()
+
         if side == "buy":
             max_q = int(max(0, bp * 0.95 / est_px))
-            return max(0, min(int(requested), max_q))
-        if cur_q > 0:
-            return max(0, min(int(requested), int(cur_q)))
-        margin_per = est_px * self._margin_rate()
-        if margin_per <= 0:
-            return 0
-        max_q = int(max(0, bp * 0.9 / margin_per))
-        return max(0, min(int(requested), max_q))
+            capped = max(0, min(int(requested), max_q))
+        elif cur_q > 0:
+            capped = max(0, min(int(requested), int(cur_q)))
+        else:
+            margin_per = est_px * self._margin_rate()
+            if margin_per <= 0:
+                return 0
+            max_q = int(max(0, bp * 0.9 / margin_per))
+            capped = max(0, min(int(requested), max_q))
+
+        if eq > 0 and side in ("buy", "sell") and capped > 0:
+            existing_notional = abs(cur_q) * est_px
+            new_notional = capped * est_px
+            if (existing_notional + new_notional) / eq > max_sym_pct:
+                allowed_notional = max(0, eq * max_sym_pct - existing_notional)
+                capped = min(capped, max(0, int(allowed_notional / est_px)))
+                if capped <= 0:
+                    log.info("Live risk: %s %s blocked — exposure > %d%%", side, sym, int(max_sym_pct * 100))
+                    return 0
+
+        return capped
 
     def _live_resync_from_broker(
         self,
@@ -876,6 +916,9 @@ class AgentSession:
         for act in decision.actions:
             if act.symbol.upper() in avoid_set:
                 log.info("Live: skipping %s %s — in avoid_symbols", act.action, act.symbol)
+                continue
+            if act.action in ("buy", "short") and decision.exposure_bias == "mostly_cash":
+                log.info("Live: skipping %s %s — exposure_bias is mostly_cash", act.action, act.symbol)
                 continue
             side = act.action
             if side == "short":

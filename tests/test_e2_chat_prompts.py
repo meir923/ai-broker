@@ -153,7 +153,8 @@ class TestPrompts:
 
     def test_system_prompt_has_meta_fields(self):
         """SYSTEM_PROMPT should request meta-strategy fields."""
-        for field in ["aggression", "cash_bias", "avoid_symbols", "priority_symbols"]:
+        for field in ["aggression", "cash_bias", "cash_target_pct", "exposure_bias",
+                       "avoid_symbols", "priority_symbols"]:
             assert field in SYSTEM_PROMPT, f"Missing meta field in prompt: {field}"
 
     def test_format_with_candidates(self):

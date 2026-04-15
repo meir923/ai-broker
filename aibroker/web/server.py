@@ -821,6 +821,7 @@ def create_app(profile_path: Path, *, port: int, open_browser: bool) -> FastAPI:
             deposit=body.deposit,
             start_date=body.start_date,
             risk_level=body.risk_level,
+            profile_path=str(profile_path),
         )
         _agent_session = session
         out = await asyncio.to_thread(session.start)
