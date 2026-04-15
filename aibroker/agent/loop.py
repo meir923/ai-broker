@@ -11,8 +11,15 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from aibroker.agent.approval import approve_live, approve_sim
 from aibroker.agent.brain import AgentDecision, think, prepare_candidates, assess_market_regime
 from aibroker.agent.collector import build_snapshot, collect_news, enrich_with_sentiment
+from aibroker.agent.intent_normalizer import NormalizedIntent, normalize
+from aibroker.agent.meta_policy import (
+    PolicyContext, build_policy_context, apply_directional_policy,
+    adjust_quantity, compute_cash_floor,
+)
+from aibroker.agent.mini_allocator import allocate
 from aibroker.agent.risk_profiles import RISK_PROFILES
 from aibroker.data.historical import Bar, load_history
 
@@ -541,59 +548,75 @@ class AgentSession:
             self.step += 1
             return self.status()
 
-        avoid_set = {s.upper() for s in decision.avoid_symbols}
-        priority_set = {s.upper() for s in decision.priority_symbols}
-        agg = decision.aggression
-        agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
-        cb = decision.cash_bias
-
+        ctx = build_policy_context(decision)
         eq = self.equity()
-        cash_floor = eq * decision.cash_target_pct / 100.0 if eq > 0 else 0
+        cash_floor = compute_cash_floor(eq, decision.cash_target_pct)
+
+        # Phase 1: directional policy + quantity adjustment
+        raw_intents: list[NormalizedIntent] = []
+        policy_notes: list[str] = []
+        dropped_actions: list[dict] = []
 
         for act in decision.actions:
-            sym_upper = act.symbol.upper()
-            if sym_upper in avoid_set:
-                log.info("Skipping %s %s — in avoid_symbols", act.action, act.symbol)
+            dr = apply_directional_policy(act.action, act.symbol, ctx)
+            if not dr.allowed:
+                log.info("Sim: %s", dr.reason)
+                dropped_actions.append({"symbol": act.symbol, "action": act.action, "reason": dr.reason})
                 continue
-            eb = decision.exposure_bias
-            if act.action in ("buy", "short") and eb == "mostly_cash":
-                log.info("Skipping %s %s — exposure_bias is mostly_cash", act.action, act.symbol)
-                continue
-            if act.action == "short" and eb == "net_long":
-                log.info("Skipping short %s — exposure_bias is net_long", act.symbol)
-                continue
-            if act.action == "buy" and eb == "net_short":
-                log.info("Skipping buy %s — exposure_bias is net_short", act.symbol)
-                continue
-            qty = act.quantity
+            qty = adjust_quantity(act.action, act.symbol, act.quantity, ctx)
+            cur_q = float(self.positions.get(act.symbol.upper(), {}).get("qty", 0))
+            intent = normalize(act.action, act.symbol, qty, cur_q, act.reason)
+            raw_intents.append(intent)
 
-            if act.action in ("buy", "short"):
-                qty = int(qty * agg_mult) if agg_mult != 1.0 else qty
-                if cb == "raise":
-                    qty = int(qty * 0.7)
-                elif cb == "deploy":
-                    qty = int(qty * 1.2)
-                if sym_upper in priority_set:
-                    qty = int(qty * 1.25)
-                qty = max(1, qty) if act.quantity > 0 else 0
-            elif act.action in ("sell", "cover") and cb == "raise":
-                qty = max(qty, int(qty * 1.2))
+        # Phase 2: allocator — rank and trim
+        def _sim_price(sym: str) -> float:
+            return self._next_bar_open(sym) or self._price_for(sym)
 
-            est_px = self._next_bar_open(act.symbol) or self._price_for(act.symbol)
-            if act.action == "buy" and self.cash - (qty * est_px) < cash_floor:
-                affordable = max(0, int((self.cash - cash_floor) / max(est_px, 1)))
-                if affordable <= 0:
-                    log.info("Skipping buy %s — would breach cash_target_pct %.0f%%", act.symbol, decision.cash_target_pct)
-                    continue
-                qty = affordable
-            if not self._sim_risk_allows(act.symbol, act.action, qty):
+        alloc = allocate(raw_intents, ctx, self.cash, eq, cash_floor, price_fn=_sim_price)
+        policy_notes.extend(alloc.notes)
+        dropped_actions.extend(alloc.dropped)
+
+        # Phase 3: approval + execution
+        reduced_actions: list[dict] = []
+        executed_actions: list[dict] = []
+
+        for intent in alloc.final_intents:
+            est_px = _sim_price(intent.symbol)
+            approval = approve_sim(
+                intent,
+                equity=eq, initial_deposit=self.initial_deposit,
+                positions=self.positions, est_price=est_px,
+                risk_level=self.risk_level,
+            )
+            if not approval.allowed:
+                log.info("Sim approval blocked %s %s: %s", intent.requested_action, intent.symbol, approval.reasons)
+                dropped_actions.append({
+                    "symbol": intent.symbol, "action": intent.requested_action,
+                    "reason": "; ".join(approval.reasons),
+                })
                 continue
-            self._execute_sim(act.symbol, act.action, qty, act.reason, sim_date)
+            exec_qty = approval.final_qty
+            if approval.reduced_from is not None:
+                reduced_actions.append({
+                    "symbol": intent.symbol, "action": intent.requested_action,
+                    "from_qty": approval.reduced_from, "to_qty": exec_qty,
+                    "reasons": approval.reasons,
+                })
+                policy_notes.extend(approval.reasons)
+            self._execute_sim(intent.symbol, intent.requested_action, exec_qty, intent.reason, sim_date)
+            executed_actions.append({
+                "symbol": intent.symbol, "action": intent.requested_action,
+                "qty": exec_qty, "kind": intent.kind,
+            })
 
         self.decisions.append({
             "step": self.step,
             "date": sim_date,
             **decision.to_dict(),
+            "policy_notes": policy_notes,
+            "dropped_actions": dropped_actions,
+            "reduced_actions": reduced_actions,
+            "executed_actions": executed_actions,
         })
 
         self._bar_index += 1
@@ -933,84 +956,79 @@ class AgentSession:
 
         from aibroker.brokers.base import OrderIntent
 
-        avoid_set = {s.upper() for s in decision.avoid_symbols}
-        priority_set = {s.upper() for s in decision.priority_symbols}
-        agg = decision.aggression
-        agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
-        cb = decision.cash_bias
-
+        ctx = build_policy_context(decision)
         live_eq = float(acct_live.get("equity_usd", 0) or 0)
         if live_eq <= 0:
             live_eq = self.equity()
         live_cash = float(acct_live.get("cash_usd", 0) or 0)
-        cash_floor = live_eq * decision.cash_target_pct / 100.0 if live_eq > 0 else 0
+        cash_floor = compute_cash_floor(live_eq, decision.cash_target_pct)
 
-        had_submitted_ok = False
+        # Phase 1: directional policy + quantity adjustment
+        raw_intents: list[NormalizedIntent] = []
+        policy_notes: list[str] = []
+        dropped_actions: list[dict] = []
+
         for act in decision.actions:
-            sym_upper = act.symbol.upper()
-            if sym_upper in avoid_set:
-                log.info("Live: skipping %s %s — in avoid_symbols", act.action, act.symbol)
+            dr = apply_directional_policy(act.action, act.symbol, ctx)
+            if not dr.allowed:
+                log.info("Live: %s", dr.reason)
+                dropped_actions.append({"symbol": act.symbol, "action": act.action, "reason": dr.reason})
                 continue
-            eb = decision.exposure_bias
-            if act.action in ("buy", "short") and eb == "mostly_cash":
-                log.info("Live: skipping %s %s — exposure_bias is mostly_cash", act.action, act.symbol)
-                continue
-            if act.action == "short" and eb == "net_long":
-                log.info("Live: skipping short %s — exposure_bias is net_long", act.symbol)
-                continue
-            if act.action == "buy" and eb == "net_short":
-                log.info("Live: skipping buy %s — exposure_bias is net_short", act.symbol)
-                continue
-            side = act.action
-            if side == "short":
-                side = "sell"
-            elif side == "cover":
-                side = "buy"
-            if side not in ("buy", "sell") or act.quantity <= 0:
-                continue
-            raw_qty = act.quantity
-            if act.action in ("buy", "short"):
-                raw_qty = int(raw_qty * agg_mult) if agg_mult != 1.0 else raw_qty
-                if cb == "raise":
-                    raw_qty = int(raw_qty * 0.7)
-                elif cb == "deploy":
-                    raw_qty = int(raw_qty * 1.2)
-                if sym_upper in priority_set:
-                    raw_qty = int(raw_qty * 1.25)
-                raw_qty = max(1, raw_qty)
-            elif act.action in ("sell", "cover") and cb == "raise":
-                raw_qty = max(raw_qty, int(raw_qty * 1.2))
-            est = broker.estimate_fill_price(act.symbol, side)
-            if act.action == "buy" and est > 0 and live_cash - (raw_qty * est) < cash_floor:
-                affordable = max(0, int((live_cash - cash_floor) / max(est, 1)))
-                if affordable <= 0:
-                    log.info("Live: skipping buy %s — would breach cash_target_pct %.0f%%",
-                             act.symbol, decision.cash_target_pct)
-                    continue
-                raw_qty = affordable
-            qty_cap = self._live_cap_order_qty(
-                acct_live, est, act.symbol, int(raw_qty), side,
+            qty = adjust_quantity(act.action, act.symbol, act.quantity, ctx)
+            cur_q = float(self.positions.get(act.symbol.upper(), {}).get("qty", 0))
+            intent = normalize(act.action, act.symbol, qty, cur_q, act.reason)
+            raw_intents.append(intent)
+
+        # Phase 2: allocator — rank and trim
+        def _live_price(sym: str) -> float:
+            return broker.estimate_fill_price(sym, "buy") or 0.0
+
+        alloc = allocate(raw_intents, ctx, live_cash, live_eq, cash_floor, price_fn=_live_price)
+        policy_notes.extend(alloc.notes)
+        dropped_actions.extend(alloc.dropped)
+
+        # Phase 3: approval + execution
+        reduced_actions: list[dict] = []
+        executed_actions: list[dict] = []
+        had_submitted_ok = False
+
+        for intent in alloc.final_intents:
+            est = broker.estimate_fill_price(intent.symbol, intent.side_for_broker)
+            approval = approve_live(
+                intent,
+                acct=acct_live, positions=self.positions,
+                est_price=est, risk_level=self.risk_level,
+                equity=live_eq, margin_rate=self._margin_rate(),
             )
-            if qty_cap <= 0:
-                log.warning("Order skipped after risk cap: %s %s", act.symbol, act.action)
+            if not approval.allowed:
+                log.warning("Live approval blocked %s %s: %s", intent.requested_action, intent.symbol, approval.reasons)
+                dropped_actions.append({
+                    "symbol": intent.symbol, "action": intent.requested_action,
+                    "reason": "; ".join(approval.reasons),
+                })
                 self.trades.append({
-                    "step": self.step,
-                    "date": _agent_trade_timestamp(),
-                    "symbol": act.symbol,
-                    "action": act.action,
-                    "price": 0,
-                    "qty": int(act.quantity),
-                    "reason": act.reason,
-                    "broker_ok": False,
-                    "broker_msg": "כמות אפס אחרי תקרת כוח קנייה / מחיר משוער",
+                    "step": self.step, "date": _agent_trade_timestamp(),
+                    "symbol": intent.symbol, "action": intent.requested_action,
+                    "price": 0, "qty": intent.requested_qty,
+                    "reason": intent.reason, "broker_ok": False,
+                    "broker_msg": "; ".join(approval.reasons),
                 })
                 continue
-            intent = OrderIntent(
-                symbol=act.symbol,
-                side=side,
-                quantity=float(qty_cap),
+            exec_qty = approval.final_qty
+            if approval.reduced_from is not None:
+                reduced_actions.append({
+                    "symbol": intent.symbol, "action": intent.requested_action,
+                    "from_qty": approval.reduced_from, "to_qty": exec_qty,
+                    "reasons": approval.reasons,
+                })
+                policy_notes.extend(approval.reasons)
+
+            order = OrderIntent(
+                symbol=intent.symbol,
+                side=intent.side_for_broker,
+                quantity=float(exec_qty),
             )
-            result = broker.place_order(intent)
+            result = broker.place_order(order)
             log.info("Order result: %s", result)
             fill = {"status": "none", "filled_avg_price": 0.0, "filled_qty": 0}
             if result.ok:
@@ -1027,17 +1045,18 @@ class AgentSession:
             px = float(fill.get("filled_avg_price") or 0.0)
             fq = int(fill.get("filled_qty") or 0)
             self.trades.append({
-                "step": self.step,
-                "date": _agent_trade_timestamp(),
-                "symbol": act.symbol,
-                "action": act.action,
+                "step": self.step, "date": _agent_trade_timestamp(),
+                "symbol": intent.symbol, "action": intent.requested_action,
                 "price": round(px, 4) if px > 0 else 0,
-                "qty": fq if fq > 0 else qty_cap,
-                "reason": act.reason,
-                "broker_ok": result.ok,
-                "broker_msg": result.message,
+                "qty": fq if fq > 0 else exec_qty,
+                "reason": intent.reason,
+                "broker_ok": result.ok, "broker_msg": result.message,
                 "order_status": str(fill.get("status", "")),
                 "fill_pending": bool(result.ok and px <= 0),
+            })
+            executed_actions.append({
+                "symbol": intent.symbol, "action": intent.requested_action,
+                "qty": exec_qty, "kind": intent.kind,
             })
 
         try:
@@ -1049,9 +1068,12 @@ class AgentSession:
             log.warning("Failed to sync account: %s", e)
 
         self.decisions.append({
-            "step": self.step,
-            "date": _agent_trade_timestamp(),
+            "step": self.step, "date": _agent_trade_timestamp(),
             **decision.to_dict(),
+            "policy_notes": policy_notes,
+            "dropped_actions": dropped_actions,
+            "reduced_actions": reduced_actions,
+            "executed_actions": executed_actions,
         })
         self.step += 1
         self.error = None
