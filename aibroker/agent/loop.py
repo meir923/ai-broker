@@ -894,8 +894,8 @@ class AgentSession:
                 db.commit()
 
             _sqlite_retry_write(_clean_and_insert)
-            save_trades(sid, self.trades)
-            save_decisions(sid, self.decisions[-50:])
+            save_trades(sid, list(self.trades))
+            save_decisions(sid, list(self.decisions)[-50:])
             log.info("Session %d persisted to DB", self._db_session_id)
         except Exception as e:
             log.warning("Failed to persist session to DB: %s", e)
@@ -968,6 +968,6 @@ class AgentSession:
             "positions_detail": positions_detail,
             "trade_count": len(self.trades),
             "last_decision": self.decisions[-1] if self.decisions else None,
-            "last_trades": self.trades[-10:],
+            "last_trades": list(self.trades)[-10:],
             "error": self.error,
         }
