@@ -140,6 +140,30 @@ def collect_news(symbols: list[str]) -> list[dict[str, str]]:
         return []
 
 
+def enrich_with_sentiment(
+    symbols: list[str],
+    news_headlines: list[dict[str, str]],
+    grok_client: Any = None,
+) -> dict[str, dict[str, Any]]:
+    """Score sentiment for each symbol using cached Grok analysis.
+
+    Returns {symbol: {sentiment: float, summary_he: str, ...}}.
+    Gracefully degrades to neutral on any failure.
+    """
+    try:
+        from aibroker.news.sentiment import score_symbol_sentiment
+        from aibroker.news.rss_fetcher import filter_headlines_for_symbol
+    except ImportError:
+        log.warning("Sentiment modules not available")
+        return {}
+
+    results: dict[str, dict[str, Any]] = {}
+    for sym in symbols:
+        sym_headlines = filter_headlines_for_symbol(news_headlines, sym, max_results=8)
+        results[sym] = score_symbol_sentiment(sym, sym_headlines, grok_client)
+    return results
+
+
 def build_snapshot(
     *,
     symbols: list[str],

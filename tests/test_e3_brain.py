@@ -1,13 +1,16 @@
-"""E3 — tests for aibroker/agent/brain.py (parsing, _safe_int_quantity)"""
+"""E3 — tests for aibroker/agent/brain.py (parsing, candidates, regime)"""
 from __future__ import annotations
 
 import pytest
+from unittest.mock import patch, MagicMock
 
 from aibroker.agent.brain import (
     AgentAction,
     AgentDecision,
     _parse_actions,
     _safe_int_quantity,
+    prepare_candidates,
+    assess_market_regime,
 )
 
 
@@ -146,7 +149,111 @@ class TestAgentModels:
         d = dec.to_dict()
         assert len(d["actions"]) == 1
         assert d["market_view"] == "bullish"
+        assert "regime" in d
+
+    def test_decision_regime_field(self):
+        dec = AgentDecision([], "neutral", "", {}, regime="bearish")
+        assert dec.regime == "bearish"
+        assert dec.to_dict()["regime"] == "bearish"
 
     def test_empty_decision(self):
         dec = AgentDecision([], "", "", {})
         assert dec.to_dict()["actions"] == []
+        assert dec.regime == ""
+
+
+# ── prepare_candidates ───────────────────────────────────────────────────
+
+def _make_indicators(symbols, n=100, base=100.0, step=1.0):
+    """Build PrecomputedIndicators from synthetic bars."""
+    from aibroker.data.historical import Bar
+    from aibroker.agent.fast_strategy import PrecomputedIndicators
+    from datetime import datetime, timedelta
+    indicators = {}
+    for sym in symbols:
+        dt = datetime(2024, 1, 2)
+        bars = []
+        for i in range(n):
+            c = round(base + i * step, 4)
+            bars.append(Bar(
+                date=dt.strftime("%Y-%m-%d"),
+                o=round(c - 0.5, 4), h=round(c + 2, 4),
+                l=round(c - 2, 4), c=c, volume=1_000_000,
+            ))
+            dt += timedelta(days=1)
+            while dt.weekday() >= 5:
+                dt += timedelta(days=1)
+        indicators[sym] = PrecomputedIndicators(bars)
+    return indicators
+
+
+class TestPrepareCandidates:
+    def test_returns_list(self):
+        ind = _make_indicators(["SPY", "AAPL", "MSFT"], n=100)
+        result = prepare_candidates(ind, 80, ["SPY", "AAPL", "MSFT"], "medium")
+        assert isinstance(result, list)
+
+    def test_candidate_fields(self):
+        ind = _make_indicators(["SPY", "AAPL", "MSFT"], n=100)
+        result = prepare_candidates(ind, 80, ["SPY", "AAPL", "MSFT"], "medium")
+        if result:
+            c = result[0]
+            assert "symbol" in c
+            assert "momentum" in c
+            assert "direction" in c
+            assert "sentiment" in c
+
+    def test_sorted_by_momentum(self):
+        ind = _make_indicators(["SPY", "AAPL", "MSFT"], n=100)
+        result = prepare_candidates(ind, 80, ["SPY", "AAPL", "MSFT"], "medium")
+        if len(result) >= 2:
+            momenta = [abs(c["momentum"]) for c in result]
+            assert momenta == sorted(momenta, reverse=True)
+
+    def test_empty_if_not_enough_bars(self):
+        ind = _make_indicators(["SPY"], n=30)
+        result = prepare_candidates(ind, 20, ["SPY"], "medium")
+        assert result == []
+
+    def test_with_sentiment(self):
+        ind = _make_indicators(["SPY"], n=100)
+        sent = {"SPY": {"sentiment": 0.8, "summary_he": "חיובי מאוד"}}
+        result = prepare_candidates(ind, 80, ["SPY"], "medium", sentiment_scores=sent)
+        if result:
+            assert result[0]["sentiment"] == 0.8
+            assert result[0]["sentiment_summary"] == "חיובי מאוד"
+
+
+# ── assess_market_regime ─────────────────────────────────────────────────
+
+class TestAssessMarketRegime:
+    def test_empty_news_returns_neutral(self):
+        assert assess_market_regime([]) == "neutral"
+
+    def test_no_titles_returns_neutral(self):
+        assert assess_market_regime([{"symbol": "SPY"}]) == "neutral"
+
+    @patch("aibroker.agent.brain._get_grok")
+    def test_calls_grok_and_parses(self, mock_get):
+        mock_grok = MagicMock()
+        mock_grok.chat_json.return_value = {"regime": "bearish", "confidence": 0.8}
+        mock_get.return_value = mock_grok
+        from aibroker.agent.brain import _cached_regime
+        _cached_regime.clear()
+        result = assess_market_regime(
+            [{"title": "Market crashes 10%"}],
+            current_date="2099-01-01",
+        )
+        assert result == "bearish"
+
+    @patch("aibroker.agent.brain._get_grok")
+    def test_caches_per_date(self, mock_get):
+        mock_grok = MagicMock()
+        mock_grok.chat_json.return_value = {"regime": "bullish", "confidence": 0.9}
+        mock_get.return_value = mock_grok
+        from aibroker.agent.brain import _cached_regime
+        _cached_regime.clear()
+        r1 = assess_market_regime([{"title": "Bull run"}], current_date="2099-02-01")
+        r2 = assess_market_regime([{"title": "Different news"}], current_date="2099-02-01")
+        assert r1 == r2 == "bullish"
+        assert mock_grok.chat_json.call_count == 1

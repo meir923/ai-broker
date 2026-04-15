@@ -1,11 +1,21 @@
-"""AI brain: sends snapshot to Grok and parses the trading decision."""
+"""AI brain: two-tier decision system.
+
+Tier 1 (code): fast_strategy.rank_symbols pre-screens candidates.
+Tier 2 (Grok): qualitative analyst — sentiment, news, macro, final decisions.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from aibroker.agent.prompts import SYSTEM_PROMPT, format_user_prompt
+from aibroker.agent.prompts import SYSTEM_PROMPT, MACRO_REGIME_PROMPT, format_user_prompt
+from aibroker.agent.risk_profiles import RISK_PROFILES
+from aibroker.agent.fast_strategy import (
+    PrecomputedIndicators,
+    rank_symbols,
+    detect_bear_regime,
+)
 from aibroker.llm.grok import GrokClient
 
 log = logging.getLogger(__name__)
@@ -60,7 +70,7 @@ class AgentAction:
 
 
 class AgentDecision:
-    __slots__ = ("actions", "market_view", "risk_note", "raw")
+    __slots__ = ("actions", "market_view", "risk_note", "regime", "raw")
 
     def __init__(
         self,
@@ -68,10 +78,12 @@ class AgentDecision:
         market_view: str,
         risk_note: str,
         raw: dict[str, Any],
+        regime: str = "",
     ):
         self.actions = actions
         self.market_view = market_view
         self.risk_note = risk_note
+        self.regime = regime
         self.raw = raw
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +91,7 @@ class AgentDecision:
             "actions": [a.to_dict() for a in self.actions],
             "market_view": self.market_view,
             "risk_note": self.risk_note,
+            "regime": self.regime,
         }
 
 
@@ -120,6 +133,80 @@ def _parse_actions(
     return actions, rejected
 
 
+# ---------------------------------------------------------------------------
+# Tier 1: Algorithmic candidate screening
+# ---------------------------------------------------------------------------
+
+def prepare_candidates(
+    indicators: dict[str, PrecomputedIndicators],
+    bar_index: int,
+    symbols: list[str],
+    risk_level: str,
+    sentiment_scores: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Pre-screen candidates via fast_strategy, enrich with sentiment.
+
+    Returns top N candidates sorted by |momentum| — includes both long and
+    short opportunities for Grok to evaluate.
+    """
+    rp = RISK_PROFILES.get(risk_level, RISK_PROFILES["medium"])
+    target = rp.get("target_positions", 7)
+    top_n = max(target + 4, 10)
+    weights = (
+        rp.get("momentum_w10", 0.25),
+        rp.get("momentum_w20", 0.40),
+        rp.get("momentum_w50", 0.35),
+    )
+
+    ranked = rank_symbols(indicators, bar_index, symbols, weights)
+    if not ranked:
+        return []
+
+    spy_ind = indicators.get("SPY")
+    is_bear, spy_rsi = detect_bear_regime(spy_ind, bar_index, rp.get("bear_trigger", "below_200"))
+
+    sent = sentiment_scores or {}
+
+    candidates: list[dict[str, Any]] = []
+    for r in ranked:
+        sym = r["symbol"]
+        mom = r["momentum"]
+        rsi_val = r["rsi"]
+
+        if mom > 0 and (rsi_val is None or rsi_val < 75):
+            direction = "buy"
+        elif mom < 0 or (rsi_val is not None and rsi_val > 70):
+            direction = "short"
+        else:
+            direction = "buy"
+
+        if is_bear and direction == "buy" and mom < 2:
+            direction = "short"
+
+        sym_sent = sent.get(sym, {})
+        candidates.append({
+            "symbol": sym,
+            "price": r["price"],
+            "momentum": r["momentum"],
+            "rsi": r.get("rsi", 50),
+            "atr": r.get("atr", 0),
+            "ma20": r.get("ma20", 0),
+            "ma50": r.get("ma50", 0),
+            "above_ma50": r.get("above_ma50", True),
+            "trend": "UP" if r.get("above_ma50") else "DOWN",
+            "direction": direction,
+            "sentiment": float(sym_sent.get("sentiment", 0)),
+            "sentiment_summary": str(sym_sent.get("summary_he", sym_sent.get("summary", ""))),
+        })
+
+    candidates.sort(key=lambda c: abs(c["momentum"]), reverse=True)
+    return candidates[:top_n]
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: Grok as Chief Analyst
+# ---------------------------------------------------------------------------
+
 def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) -> AgentDecision:
     grok = _get_grok()
     correction = ""
@@ -139,6 +226,7 @@ def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) ->
                 market_view=str(resp.get("market_view", "")),
                 risk_note=str(resp.get("risk_note", "")),
                 raw=resp,
+                regime=str(resp.get("regime", "")),
             )
         allow_txt = ", ".join(allowed_symbols or [])
         bad = ", ".join(sorted(rejected))
@@ -152,4 +240,48 @@ def think(snapshot: dict[str, Any], allowed_symbols: list[str] | None = None) ->
         market_view=str(resp.get("market_view", "")),
         risk_note=str(resp.get("risk_note", "")),
         raw=resp,
+        regime=str(resp.get("regime", "")),
     )
+
+
+# ---------------------------------------------------------------------------
+# Macro morning call
+# ---------------------------------------------------------------------------
+
+_cached_regime: dict[str, str] = {}  # {"date": regime}
+
+
+def assess_market_regime(
+    news_headlines: list[dict[str, str]],
+    current_date: str = "",
+) -> str:
+    """Daily macro regime assessment via Grok. Returns bullish/bearish/neutral.
+
+    Cached per date so we only call Grok once per trading day.
+    """
+    if current_date and current_date in _cached_regime:
+        return _cached_regime[current_date]
+
+    if not news_headlines:
+        return "neutral"
+
+    grok = _get_grok()
+    titles = [h.get("title", "") for h in news_headlines[:20] if h.get("title")]
+    if not titles:
+        return "neutral"
+
+    user_msg = "כותרות חדשות מהיום:\n" + "\n".join(f"- {t}" for t in titles)
+
+    try:
+        result = grok.chat_json(MACRO_REGIME_PROMPT, user_msg)
+        regime = str(result.get("regime", "neutral")).lower()
+        if regime not in ("bullish", "bearish", "neutral"):
+            regime = "neutral"
+        log.info("Macro regime assessment: %s (confidence: %s)", regime, result.get("confidence"))
+    except Exception as e:
+        log.warning("Macro regime call failed: %s", e)
+        regime = "neutral"
+
+    if current_date:
+        _cached_regime[current_date] = regime
+    return regime

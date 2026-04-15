@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from aibroker.agent.brain import AgentDecision, think
-from aibroker.agent.collector import build_snapshot, collect_news
+from aibroker.agent.brain import AgentDecision, think, prepare_candidates, assess_market_regime
+from aibroker.agent.collector import build_snapshot, collect_news, enrich_with_sentiment
 from aibroker.agent.risk_profiles import RISK_PROFILES
 from aibroker.data.historical import Bar, load_history
 
@@ -471,7 +471,7 @@ class AgentSession:
 
     def _tick_sim(self) -> dict[str, Any]:
         raw_len = min(len(b) for b in self._history.values()) if self._history else 0
-        max_len = raw_len - 1  # stop one bar early for next-open execution
+        max_len = raw_len - 1
         ref_bars = self._history.get("SPY", list(self._history.values())[0] if self._history else [])
         if max_len < 1 or self._bar_index >= max_len:
             self.running = False
@@ -480,6 +480,37 @@ class AgentSession:
 
         sim_date = ref_bars[self._bar_index].get("date", str(self._bar_index)) if self._bar_index < len(ref_bars) else str(self._bar_index)
 
+        # Tier 1: Fetch live news for sim (cached, almost free)
+        sim_news = self._get_sim_news()
+
+        # Tier 1: Macro regime assessment (once per day, cached)
+        regime = "neutral"
+        if sim_news:
+            try:
+                regime = assess_market_regime(sim_news, current_date=sim_date)
+            except Exception as e:
+                log.warning("Macro regime failed: %s", e)
+
+        # Tier 1: Algorithmic candidate screening
+        from aibroker.agent.fast_strategy import precompute_all
+        if self._indicators is None:
+            self._indicators = precompute_all(self._history)
+
+        sentiment_scores: dict = {}
+        if sim_news:
+            try:
+                sentiment_scores = enrich_with_sentiment(self.symbols, sim_news)
+            except Exception as e:
+                log.warning("Sentiment enrichment failed: %s", e)
+
+        candidates = prepare_candidates(
+            self._indicators,
+            self._bar_index,
+            self.symbols,
+            self.risk_level,
+            sentiment_scores=sentiment_scores,
+        )
+
         snapshot = build_snapshot(
             symbols=self.symbols,
             history=self._history,
@@ -487,10 +518,12 @@ class AgentSession:
             positions=self.positions,
             cash=self.cash,
             initial_deposit=self.initial_deposit,
-            news=[],
+            news=sim_news,
             sim_date=sim_date,
         )
         snapshot["risk_level"] = self.risk_level
+        snapshot["regime"] = regime
+        snapshot["candidates"] = candidates
         rp = RISK_PROFILES.get(self.risk_level, RISK_PROFILES["medium"])
         snapshot["portfolio"]["buying_power"] = round(self._sim_buying_power(), 2)
         snapshot["portfolio"]["leverage"] = rp.get("leverage", 2.0)
@@ -518,6 +551,20 @@ class AgentSession:
         self._bar_index += 1
         self.step += 1
         return self.status()
+
+    def _get_sim_news(self) -> list[dict[str, str]]:
+        """Fetch live RSS headlines for sim mode (cached for 5 min)."""
+        now = time.time()
+        if now - self._last_news_fetch <= 300 and self._news_cache:
+            return list(self._news_cache)
+        try:
+            news = collect_news(self.symbols)
+            self._news_cache = news
+            self._last_news_fetch = now
+            return news
+        except Exception as e:
+            log.warning("Sim news fetch failed: %s", e)
+            return list(self._news_cache)
 
     def _sim_risk_allows(self, symbol: str, action: str, qty: int) -> bool:
         """Enforce risk limits in simulation: drawdown cap, per-symbol exposure."""
@@ -729,6 +776,35 @@ class AgentSession:
         with self._news_lock:
             safe_news = list(self._news_cache)
 
+        # Tier 1: Macro regime assessment
+        regime = "neutral"
+        if safe_news:
+            try:
+                from datetime import date as _date_cls
+                regime = assess_market_regime(safe_news, current_date=_date_cls.today().isoformat())
+            except Exception as e:
+                log.warning("Live macro regime failed: %s", e)
+
+        # Tier 1: Algorithmic candidate screening
+        from aibroker.agent.fast_strategy import precompute_all
+        if self._history:
+            live_indicators = precompute_all(self._history)
+            sentiment_scores: dict = {}
+            if safe_news:
+                try:
+                    sentiment_scores = enrich_with_sentiment(self.symbols, safe_news)
+                except Exception as e:
+                    log.warning("Live sentiment failed: %s", e)
+            candidates = prepare_candidates(
+                live_indicators,
+                self._bar_index,
+                self.symbols,
+                self.risk_level,
+                sentiment_scores=sentiment_scores,
+            )
+        else:
+            candidates = []
+
         snapshot = build_snapshot(
             symbols=self.symbols,
             history=self._history,
@@ -739,6 +815,8 @@ class AgentSession:
             news=safe_news,
         )
         snapshot["risk_level"] = self.risk_level
+        snapshot["regime"] = regime
+        snapshot["candidates"] = candidates
 
         try:
             broker = self._ensure_broker_connected()

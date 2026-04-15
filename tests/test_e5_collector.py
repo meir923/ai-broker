@@ -1,7 +1,8 @@
-"""E5 — tests for aibroker/agent/collector.py (indicators, snapshot)"""
+"""E5 — tests for aibroker/agent/collector.py (indicators, snapshot, sentiment)"""
 from __future__ import annotations
 
 import math
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -9,6 +10,7 @@ from aibroker.data.historical import Bar
 from aibroker.agent.collector import (
     atr,
     build_snapshot,
+    enrich_with_sentiment,
     market_clock,
     rsi,
     sma,
@@ -196,3 +198,28 @@ class TestBuildSnapshot:
         )
         assert s["technicals"] == {}
         assert s["portfolio"]["equity"] == 100000
+
+
+# ── enrich_with_sentiment ───────────────────────────────────────────────
+
+class TestEnrichWithSentiment:
+    @patch("aibroker.news.sentiment.score_symbol_sentiment")
+    @patch("aibroker.news.rss_fetcher.filter_headlines_for_symbol")
+    def test_returns_per_symbol(self, mock_filter, mock_score):
+        mock_filter.return_value = [{"title": "AAPL beats earnings"}]
+        mock_score.return_value = {"sentiment": 0.7, "summary_he": "חיובי"}
+        result = enrich_with_sentiment(
+            ["AAPL", "MSFT"],
+            [{"title": "AAPL beats earnings", "symbol": "AAPL"}],
+        )
+        assert "AAPL" in result
+        assert "MSFT" in result
+        assert result["AAPL"]["sentiment"] == 0.7
+
+    @patch("aibroker.news.sentiment.score_symbol_sentiment")
+    @patch("aibroker.news.rss_fetcher.filter_headlines_for_symbol")
+    def test_empty_news(self, mock_filter, mock_score):
+        mock_filter.return_value = []
+        mock_score.return_value = {"sentiment": 0.0, "summary": "no data"}
+        result = enrich_with_sentiment(["SPY"], [])
+        assert result["SPY"]["sentiment"] == 0.0

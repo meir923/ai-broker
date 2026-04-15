@@ -1,20 +1,33 @@
-"""Prompt templates for the AI trading agent."""
+"""Prompt templates for the AI trading agent (Two-Tier Architecture).
+
+Tier 1 (code) screens candidates via fast_strategy.py.
+Tier 2 (Grok) acts as Chief Analyst: sentiment, news, macro, final decisions.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-SYSTEM_PROMPT = """אתה סוכן מסחר אוטונומי מקצועי שמנהל תיק בשוק האמריקאי.
-המטרה שלך: תשואה מקסימלית תוך ניהול סיכונים.
+SYSTEM_PROMPT = """אתה מנהל קרן גידור מבריק שמקבל החלטות סופיות לגבי מניות בשוק האמריקאי.
+
+המערכת הטכנית כבר סרקה את השוק וזיהתה מועמדים (candidates) לקנייה/שורט על בסיס מומנטום, RSI, ממוצעים נעים ו-ATR.
+תפקידך: לבדוק את הסיפור מאחורי כל מועמד ולהחליט מי באמת שווה השקעה.
+
+תחומי אחריות:
+1. סנטימנט: סרוק את הכותרות וחפש דגלים אדומים (תביעות, דוחות מאכזבים, אזהרות רווח) או דגלים ירוקים (הכנסות שוברות שיא, שותפויות, מוצרים חדשים)
+2. מאקרו: העריך את מצב השוק הכללי — האם זה יום למתקפה או להגנה?
+3. סינון: פסול מועמדים עם סנטימנט שלילי או חדשות רעות, גם אם הטכניקלס טובים
+4. גודל: קבע כמויות לפי רמת הביטחון שלך — יותר ביטחון = פוזיציה גדולה יותר
 
 כללים:
-1. בכל צעד — פעולות על לפחות 3 סימבולים
-2. שמור 5-8 פוזיציות פתוחות תמיד, לונג ושורט
-3. פחות מ-5 פוזיציות → חובה לפתוח מיד
-4. מזומן > 20% מההון → חובה לפתוח פוזיציות נוספות
-5. כמויות גדולות ומשמעותיות — לפחות 3-5% מההון לפוזיציה, עד 25%
-6. אל תחזיק מפסיד — אם פוזיציה ירדה מעל 5%, סגור אותה
-7. שורט הוא כלי לגיטימי — השתמש בו בטרנד DOWN וב-RSI גבוה
+- בכל צעד חובה פעולות על לפחות 3 סימבולים
+- שמור 5-8 פוזיציות פתוחות, לונג ושורט
+- פחות מ-5 פוזיציות → חובה לפתוח חדשות מיד
+- מזומן > 20% מההון → חובה לפתוח פוזיציות
+- פוזיציה מפסידה מעל 5% → שקול לסגור (sell/cover)
+- סנטימנט שלילי + טרנד DOWN = שורט אגרסיבי
+- סנטימנט חיובי + טרנד UP = לונג אגרסיבי
+- סנטימנט סותר את הטכניקלס = הקטן פוזיציה או דלג
 
 פעולות:
 - buy = קנייה (לונג)
@@ -22,29 +35,30 @@ SYSTEM_PROMPT = """אתה סוכן מסחר אוטונומי מקצועי שמנ
 - short = פתיחת שורט
 - cover = סגירת שורט
 
-לוגיקה:
-- UP + RSI < 65 → buy אגרסיבי
-- DOWN + RSI > 40 → short אגרסיבי
-- פוזיציה נגד הטרנד → סגור מיד (sell/cover)
-- מניה ב-SIDEWAYS עם ATR גבוה → מסחר קצר טווח
-- ROC שלילי חזק → short / sell
-- ROC חיובי חזק → buy / cover
-
-חשב כמו סוחר מקצועי: פעל בתוקפנות מחושבת, לא בפחד. ההון הזה חייב לעבוד.
-
 ענה ב-JSON בלבד:
 {
-  "actions": [{"symbol":"XXX","action":"buy|sell|short|cover","quantity":50,"reason":"סיבה"}],
-  "market_view": "תיאור קצר בעברית",
-  "risk_note": "הערת סיכון בעברית"
+  "actions": [{"symbol":"XXX","action":"buy|sell|short|cover","quantity":50,"reason":"סיבה כולל ניתוח סנטימנט"}],
+  "market_view": "הערכת שוק כללית בעברית",
+  "risk_note": "הערת סיכון בעברית",
+  "regime": "bullish|bearish|neutral"
 }"""
 
 
 RISK_INSTRUCTIONS = {
-    "low": "רמת סיכון נמוכה: מינוף 2:1. עד 20% מההון בפוזיציה. שורטים בטרנד ברור. סטופ 8%.",
-    "medium": "רמת סיכון בינונית: מינוף 3:1. עד 25% מההון בפוזיציה. שורטים מותרים. מסחר אקטיבי. סטופ 12%.",
-    "high": "רמת סיכון מוגברת: מינוף 4:1. עד 30% מההון בפוזיציה. שורטים ולונגים אגרסיביים. כמויות גדולות. סטופ 18%.",
+    "low": "רמת סיכון נמוכה: מינוף 2:1. עד 20% מההון בפוזיציה. העדף מועמדים עם סנטימנט חיובי ברור. סטופ 8%.",
+    "medium": "רמת סיכון בינונית: מינוף 3:1. עד 25% מההון בפוזיציה. מותר לפעול גם על סנטימנט מעורב. סטופ 12%.",
+    "high": "רמת סיכון מוגברת: מינוף 4:1. עד 30% מההון בפוזיציה. פעל אגרסיבית על כל סנטימנט ברור. סטופ 18%.",
 }
+
+
+MACRO_REGIME_PROMPT = """אתה אנליסט מאקרו-כלכלי. על בסיס הכותרות הבאות, קבע את משטר השוק להיום.
+
+ענה ב-JSON בלבד:
+{
+  "regime": "bullish|bearish|neutral",
+  "confidence": 0.0-1.0,
+  "reasoning": "הסבר קצר בעברית"
+}"""
 
 
 def format_user_prompt(snapshot: dict[str, Any]) -> str:
@@ -60,6 +74,11 @@ def format_user_prompt(snapshot: dict[str, Any]) -> str:
     lines.append(f"--- {date} ---")
     lines.append(f"NY: {clock.get('ny_time', '?')} | IL: {clock.get('il_time', '?')} | {clock.get('status', '?')}")
     lines.append("")
+
+    regime = snapshot.get("regime")
+    if regime:
+        lines.append(f"*** Market Regime: {regime.upper()} ***")
+        lines.append("")
 
     port = snapshot.get("portfolio", {})
     lines.append("--- Portfolio ---")
@@ -82,37 +101,50 @@ def format_user_prompt(snapshot: dict[str, Any]) -> str:
         lines.append(f"*** WARNING: Only {open_count} positions open. You MUST open more to reach at least 5! ***")
     lines.append("")
 
+    # Candidates from algorithmic screening (Tier 1)
+    candidates = snapshot.get("candidates", [])
+    if candidates:
+        lines.append("--- Candidates (pre-screened by algorithm) ---")
+        for c in candidates:
+            score = c.get("momentum", 0)
+            sent = c.get("sentiment", 0)
+            sent_label = "POS" if sent > 0.2 else "NEG" if sent < -0.2 else "NEU"
+            sent_summary = c.get("sentiment_summary", "")
+            direction = c.get("direction", "buy")
+            lines.append(
+                f"{c['symbol']}: ${c.get('price', 0):.2f} | momentum: {score:+.1f}% | "
+                f"RSI: {c.get('rsi', '?'):.0f} | trend: {c.get('trend', '?')} | "
+                f"sentiment: {sent:+.2f} ({sent_label}) | suggested: {direction}"
+            )
+            if sent_summary:
+                lines.append(f"  >> {sent_summary}")
+        lines.append("")
+
+    # News headlines
     news = snapshot.get("news", [])
     if news:
-        lines.append("--- News (live) ---")
-        for i, h in enumerate(news[:15], 1):
+        lines.append("--- Headlines ---")
+        for i, h in enumerate(news[:20], 1):
             sym = h.get("symbol", "")
             title = h.get("title", "")
             lines.append(f"{i}. [{sym}] {title}")
         lines.append("")
     else:
-        lines.append("--- No news available, decide based on technicals only ---")
+        lines.append("--- No news available ---")
         lines.append("")
 
+    # Existing positions with technicals for management decisions
     tech = snapshot.get("technicals", {})
-    if tech:
-        lines.append("--- Technicals ---")
-        for sym, t in tech.items():
+    pos_syms = {p["symbol"] for p in positions}
+    pos_tech = {sym: t for sym, t in tech.items() if sym in pos_syms}
+    if pos_tech:
+        lines.append("--- Current Positions Technicals ---")
+        for sym, t in pos_tech.items():
             roc5 = t.get("roc5")
-            roc20 = t.get("roc20")
-            roc_str = ""
-            if roc5 is not None:
-                roc_str += f" | ROC5: {roc5:+.1f}%"
-            if roc20 is not None:
-                roc_str += f" | ROC20: {roc20:+.1f}%"
-            atr_pct = t.get("atr_pct", 0)
+            roc_str = f" | ROC5: {roc5:+.1f}%" if roc5 is not None else ""
             lines.append(
-                f"{sym}: ${t.get('price', 0):.2f} | MA20: ${t.get('ma20', 0):.2f} | MA50: ${t.get('ma50', 0):.2f} | "
-                f"RSI14: {t.get('rsi14', '?')} | ATR%: {atr_pct:.1f}%{roc_str} | "
-                f"trend: {t.get('trend', '?')}"
+                f"{sym}: RSI {t.get('rsi14', '?')} | trend: {t.get('trend', '?')}{roc_str}"
             )
-            last5 = t.get("last5")
-            if last5:
-                lines.append(f"  last 5 closes: {last5}")
+        lines.append("")
 
     return "\n".join(lines)

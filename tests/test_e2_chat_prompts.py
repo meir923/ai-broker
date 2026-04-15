@@ -6,6 +6,7 @@ import pytest
 from aibroker.llm.chat import build_context_snapshot
 from aibroker.agent.prompts import (
     SYSTEM_PROMPT,
+    MACRO_REGIME_PROMPT,
     RISK_INSTRUCTIONS,
     format_user_prompt,
 )
@@ -76,6 +77,11 @@ class TestPrompts:
             "technicals": {
                 "SPY": {"price": 500, "ma20": 495, "rsi14": 55, "atr14": 5.0, "trend": "UP"},
             },
+            "candidates": [
+                {"symbol": "SPY", "price": 500, "momentum": 5.2, "rsi": 55,
+                 "trend": "UP", "direction": "buy", "sentiment": 0.3,
+                 "sentiment_summary": "positive"},
+            ],
             "news": [],
         }
         result = format_user_prompt(snapshot)
@@ -93,7 +99,7 @@ class TestPrompts:
             "news": [],
         }
         result = format_user_prompt(snapshot)
-        assert "מוגברת" in result or "high" in result.lower() or "25%" in result
+        assert "מוגברת" in result or "high" in result.lower() or "30%" in result
 
     def test_format_warns_few_positions(self):
         snapshot = {
@@ -118,3 +124,34 @@ class TestPrompts:
         }
         result = format_user_prompt(snapshot)
         assert "SPY surges" in result
+        assert "Headlines" in result
+
+    def test_format_with_regime(self):
+        snapshot = {
+            "clock": {"ny_time": "10:00", "il_time": "17:00", "status": "OPEN"},
+            "date": "2024-06-01",
+            "regime": "bearish",
+            "portfolio": {"cash": 90000, "equity": 100000, "pnl": 0, "pnl_pct": 0, "positions": []},
+            "technicals": {},
+            "news": [],
+        }
+        result = format_user_prompt(snapshot)
+        assert "BEARISH" in result
+
+    def test_format_with_candidates(self):
+        snapshot = {
+            "clock": {"ny_time": "10:00", "il_time": "17:00", "status": "OPEN"},
+            "date": "2024-06-01",
+            "portfolio": {"cash": 90000, "equity": 100000, "pnl": 0, "pnl_pct": 0, "positions": []},
+            "technicals": {},
+            "news": [],
+            "candidates": [
+                {"symbol": "AAPL", "price": 180, "momentum": 3.5, "rsi": 60,
+                 "trend": "UP", "direction": "buy", "sentiment": 0.5,
+                 "sentiment_summary": "positive earnings"},
+            ],
+        }
+        result = format_user_prompt(snapshot)
+        assert "AAPL" in result
+        assert "Candidates" in result
+        assert "positive earnings" in result
