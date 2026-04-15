@@ -555,8 +555,15 @@ class AgentSession:
             if sym_upper in avoid_set:
                 log.info("Skipping %s %s — in avoid_symbols", act.action, act.symbol)
                 continue
-            if act.action in ("buy", "short") and decision.exposure_bias == "mostly_cash":
+            eb = decision.exposure_bias
+            if act.action in ("buy", "short") and eb == "mostly_cash":
                 log.info("Skipping %s %s — exposure_bias is mostly_cash", act.action, act.symbol)
+                continue
+            if act.action == "short" and eb == "net_long":
+                log.info("Skipping short %s — exposure_bias is net_long", act.symbol)
+                continue
+            if act.action == "buy" and eb == "net_short":
+                log.info("Skipping buy %s — exposure_bias is net_short", act.symbol)
                 continue
             qty = act.quantity
 
@@ -777,7 +784,10 @@ class AgentSession:
             max_q = int(max(0, bp * 0.9 / margin_per))
             capped = max(0, min(int(requested), max_q))
 
-        if eq > 0 and side in ("buy", "sell") and capped > 0:
+        # Exposure cap only applies when *opening* or *increasing* a position.
+        # sell-to-close (cur_q > 0 and side == "sell") reduces exposure — skip cap.
+        opening = (side == "buy" and cur_q >= 0) or (side == "sell" and cur_q <= 0)
+        if eq > 0 and opening and capped > 0:
             existing_notional = abs(cur_q) * est_px
             new_notional = capped * est_px
             if (existing_notional + new_notional) / eq > max_sym_pct:
@@ -928,14 +938,27 @@ class AgentSession:
         agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
         cb = decision.cash_bias
 
+        live_eq = float(acct_live.get("equity_usd", 0) or 0)
+        if live_eq <= 0:
+            live_eq = self.equity()
+        live_cash = float(acct_live.get("cash_usd", 0) or 0)
+        cash_floor = live_eq * decision.cash_target_pct / 100.0 if live_eq > 0 else 0
+
         had_submitted_ok = False
         for act in decision.actions:
             sym_upper = act.symbol.upper()
             if sym_upper in avoid_set:
                 log.info("Live: skipping %s %s — in avoid_symbols", act.action, act.symbol)
                 continue
-            if act.action in ("buy", "short") and decision.exposure_bias == "mostly_cash":
+            eb = decision.exposure_bias
+            if act.action in ("buy", "short") and eb == "mostly_cash":
                 log.info("Live: skipping %s %s — exposure_bias is mostly_cash", act.action, act.symbol)
+                continue
+            if act.action == "short" and eb == "net_long":
+                log.info("Live: skipping short %s — exposure_bias is net_long", act.symbol)
+                continue
+            if act.action == "buy" and eb == "net_short":
+                log.info("Live: skipping buy %s — exposure_bias is net_short", act.symbol)
                 continue
             side = act.action
             if side == "short":
@@ -957,6 +980,13 @@ class AgentSession:
             elif act.action in ("sell", "cover") and cb == "raise":
                 raw_qty = max(raw_qty, int(raw_qty * 1.2))
             est = broker.estimate_fill_price(act.symbol, side)
+            if act.action == "buy" and est > 0 and live_cash - (raw_qty * est) < cash_floor:
+                affordable = max(0, int((live_cash - cash_floor) / max(est, 1)))
+                if affordable <= 0:
+                    log.info("Live: skipping buy %s — would breach cash_target_pct %.0f%%",
+                             act.symbol, decision.cash_target_pct)
+                    continue
+                raw_qty = affordable
             qty_cap = self._live_cap_order_qty(
                 acct_live, est, act.symbol, int(raw_qty), side,
             )

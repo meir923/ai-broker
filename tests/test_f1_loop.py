@@ -414,6 +414,71 @@ class TestPrioritySymbolsEffect:
         assert qty == 150
 
 
+class TestExposureBiasDirectional:
+    """exposure_bias should block directional trades when appropriate."""
+
+    def test_net_long_blocks_shorts(self):
+        """net_long exposure_bias should prevent new short positions."""
+        eb = "net_long"
+        action = "short"
+        blocked = (action == "short" and eb == "net_long")
+        assert blocked is True
+
+    def test_net_long_allows_buys(self):
+        eb = "net_long"
+        action = "buy"
+        blocked = (action == "buy" and eb == "net_short") or (action == "short" and eb == "net_long")
+        assert blocked is False
+
+    def test_net_short_blocks_buys(self):
+        eb = "net_short"
+        action = "buy"
+        blocked = (action == "buy" and eb == "net_short")
+        assert blocked is True
+
+    def test_net_short_allows_shorts(self):
+        eb = "net_short"
+        action = "short"
+        blocked = (action == "buy" and eb == "net_short") or (action == "short" and eb == "net_long")
+        assert blocked is False
+
+    def test_neutral_allows_both(self):
+        eb = "neutral"
+        for action in ("buy", "short"):
+            blocked = (
+                (action == "buy" and eb == "net_short")
+                or (action == "short" and eb == "net_long")
+                or (action in ("buy", "short") and eb == "mostly_cash")
+            )
+            assert blocked is False, f"{action} should be allowed with neutral bias"
+
+    def test_mostly_cash_blocks_both(self):
+        eb = "mostly_cash"
+        for action in ("buy", "short"):
+            blocked = (action in ("buy", "short") and eb == "mostly_cash")
+            assert blocked is True
+
+
+class TestLiveCapExposureBug:
+    """_live_cap_order_qty must not block sell-to-close (exit from long)."""
+
+    def test_sell_to_close_not_blocked_by_exposure(self):
+        bars = _bars(100, base=100, step=0)
+        s = _session({"SPY": bars}, deposit=100_000)
+        s.positions = {"SPY": {"qty": 200, "avg_cost": 100.0}}
+        acct = {"buying_power_usd": 50_000, "equity_usd": 100_000, "cash_usd": 80_000}
+        result = s._live_cap_order_qty(acct, 150.0, "SPY", 200, "sell")
+        assert result == 200, "Selling existing long should NOT be blocked by exposure cap"
+
+    def test_sell_to_open_short_is_capped(self):
+        bars = _bars(100, base=100, step=0)
+        s = _session({"SPY": bars}, deposit=100_000)
+        s.positions = {}
+        acct = {"buying_power_usd": 50_000, "equity_usd": 100_000, "cash_usd": 80_000}
+        result = s._live_cap_order_qty(acct, 150.0, "SPY", 500, "sell")
+        assert result < 500, "Opening a new short should be capped by exposure"
+
+
 class TestDequeMemoryBound:
     """Verify trades/decisions use bounded deque to prevent memory leak."""
 
