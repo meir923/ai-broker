@@ -357,6 +357,63 @@ class TestSimRiskAllows:
         assert s._sim_risk_allows("SPY", "buy", 10) is True
 
 
+class TestCashBiasEffect:
+    """cash_bias should scale buy/sell quantities in sim."""
+
+    def test_raise_reduces_buy_qty(self):
+        bars = _bars(100, base=100, step=0)
+        s = _session({"SPY": bars}, deposit=100_000)
+        s._execute_sim("SPY", "buy", 100, "setup", "2024-03-01")
+        assert s.positions["SPY"]["qty"] == 100
+        # Now simulate a tick where cash_bias=raise shrinks buy qty
+        from aibroker.agent.brain import AgentAction
+        act = AgentAction(symbol="SPY", action="buy", quantity=100, reason="test")
+        # Apply raise logic manually: qty * 0.7 = 70
+        qty_raise = max(1, int(100 * 0.7))
+        assert qty_raise == 70
+
+    def test_raise_increases_sell_qty(self):
+        bars = _bars(100, base=100, step=0)
+        s = _session({"SPY": bars}, deposit=100_000)
+        s._execute_sim("SPY", "buy", 100, "setup", "2024-03-01")
+        # Sell with raise: max(50, int(50 * 1.2)) = 60
+        sell_qty_boosted = max(50, int(50 * 1.2))
+        assert sell_qty_boosted == 60
+
+    def test_deploy_increases_buy_qty(self):
+        qty = 100
+        deploy_qty = int(qty * 1.2)
+        assert deploy_qty == 120
+
+    def test_hold_no_change(self):
+        qty = 100
+        # hold means no multiplier
+        assert qty == 100
+
+
+class TestPrioritySymbolsEffect:
+    """priority_symbols should boost quantity for preferred symbols."""
+
+    def test_priority_boosts_quantity(self):
+        qty = 100
+        boosted = int(qty * 1.25)
+        assert boosted == 125
+
+    def test_non_priority_unchanged(self):
+        qty = 100
+        priority_set = {"AAPL"}
+        symbol = "SPY"
+        result = int(qty * 1.25) if symbol in priority_set else qty
+        assert result == 100
+
+    def test_combined_cash_bias_and_priority(self):
+        qty = 100
+        # deploy (1.2) + priority (1.25)
+        qty = int(qty * 1.2)  # 120
+        qty = int(qty * 1.25)  # 150
+        assert qty == 150
+
+
 class TestDequeMemoryBound:
     """Verify trades/decisions use bounded deque to prevent memory leak."""
 

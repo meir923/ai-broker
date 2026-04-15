@@ -542,22 +542,36 @@ class AgentSession:
             return self.status()
 
         avoid_set = {s.upper() for s in decision.avoid_symbols}
+        priority_set = {s.upper() for s in decision.priority_symbols}
         agg = decision.aggression
         agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
+        cb = decision.cash_bias
 
         eq = self.equity()
         cash_floor = eq * decision.cash_target_pct / 100.0 if eq > 0 else 0
 
         for act in decision.actions:
-            if act.symbol.upper() in avoid_set:
+            sym_upper = act.symbol.upper()
+            if sym_upper in avoid_set:
                 log.info("Skipping %s %s — in avoid_symbols", act.action, act.symbol)
                 continue
             if act.action in ("buy", "short") and decision.exposure_bias == "mostly_cash":
                 log.info("Skipping %s %s — exposure_bias is mostly_cash", act.action, act.symbol)
                 continue
             qty = act.quantity
-            if agg_mult != 1.0 and act.action in ("buy", "short"):
-                qty = max(1, int(qty * agg_mult))
+
+            if act.action in ("buy", "short"):
+                qty = int(qty * agg_mult) if agg_mult != 1.0 else qty
+                if cb == "raise":
+                    qty = int(qty * 0.7)
+                elif cb == "deploy":
+                    qty = int(qty * 1.2)
+                if sym_upper in priority_set:
+                    qty = int(qty * 1.25)
+                qty = max(1, qty) if act.quantity > 0 else 0
+            elif act.action in ("sell", "cover") and cb == "raise":
+                qty = max(qty, int(qty * 1.2))
+
             if act.action == "buy" and self.cash - (qty * self._price_for(act.symbol)) < cash_floor:
                 affordable = max(0, int((self.cash - cash_floor) / max(self._price_for(act.symbol), 1)))
                 if affordable <= 0:
@@ -909,12 +923,15 @@ class AgentSession:
         from aibroker.brokers.base import OrderIntent
 
         avoid_set = {s.upper() for s in decision.avoid_symbols}
+        priority_set = {s.upper() for s in decision.priority_symbols}
         agg = decision.aggression
         agg_mult = {"conservative": 0.6, "normal": 1.0, "aggressive": 1.4}.get(agg, 1.0)
+        cb = decision.cash_bias
 
         had_submitted_ok = False
         for act in decision.actions:
-            if act.symbol.upper() in avoid_set:
+            sym_upper = act.symbol.upper()
+            if sym_upper in avoid_set:
                 log.info("Live: skipping %s %s — in avoid_symbols", act.action, act.symbol)
                 continue
             if act.action in ("buy", "short") and decision.exposure_bias == "mostly_cash":
@@ -928,8 +945,17 @@ class AgentSession:
             if side not in ("buy", "sell") or act.quantity <= 0:
                 continue
             raw_qty = act.quantity
-            if agg_mult != 1.0 and act.action in ("buy", "short"):
-                raw_qty = max(1, int(raw_qty * agg_mult))
+            if act.action in ("buy", "short"):
+                raw_qty = int(raw_qty * agg_mult) if agg_mult != 1.0 else raw_qty
+                if cb == "raise":
+                    raw_qty = int(raw_qty * 0.7)
+                elif cb == "deploy":
+                    raw_qty = int(raw_qty * 1.2)
+                if sym_upper in priority_set:
+                    raw_qty = int(raw_qty * 1.25)
+                raw_qty = max(1, raw_qty)
+            elif act.action in ("sell", "cover") and cb == "raise":
+                raw_qty = max(raw_qty, int(raw_qty * 1.2))
             est = broker.estimate_fill_price(act.symbol, side)
             qty_cap = self._live_cap_order_qty(
                 acct_live, est, act.symbol, int(raw_qty), side,
