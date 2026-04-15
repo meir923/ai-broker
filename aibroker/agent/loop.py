@@ -579,8 +579,9 @@ class AgentSession:
             elif act.action in ("sell", "cover") and cb == "raise":
                 qty = max(qty, int(qty * 1.2))
 
-            if act.action == "buy" and self.cash - (qty * self._price_for(act.symbol)) < cash_floor:
-                affordable = max(0, int((self.cash - cash_floor) / max(self._price_for(act.symbol), 1)))
+            est_px = self._next_bar_open(act.symbol) or self._price_for(act.symbol)
+            if act.action == "buy" and self.cash - (qty * est_px) < cash_floor:
+                affordable = max(0, int((self.cash - cash_floor) / max(est_px, 1)))
                 if affordable <= 0:
                     log.info("Skipping buy %s — would breach cash_target_pct %.0f%%", act.symbol, decision.cash_target_pct)
                     continue

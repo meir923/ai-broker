@@ -1,4 +1,4 @@
-"""Risk profile definitions — single source of truth for simulation parameters."""
+"""Risk profile definitions — single source of truth for sim and live risk parameters."""
 
 from __future__ import annotations
 
